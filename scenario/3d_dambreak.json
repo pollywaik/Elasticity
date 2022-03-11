@@ -11,27 +11,27 @@
         "phase_color_hex": ["0x6F7DBC","0xFA8012","0xFA8072"]
     },
     "fluid":{
-        "max_part_num": 1e5,
+        "max_part_num": 1e4,
         "objs":[
             {
                 "type":"cube",
                 "vel": [0, 0, 0],
                 "particle_relaxing_factor":1.001,
-                "start_pos":[-0.5,-0.5,-0.5],
-                "end_pos":[0,0,0],
+                "start_pos":[-0.2,-0.2,-0.2],
+                "end_pos":[0.2,0.2,0.2],
                 "volume_frac":[1,0,0],
                 "color":"0x6F7DBC"
             }
         ]
     },
     "bound":{
-        "max_part_num": 1e5,
+        "max_part_num": 1e4,
         "objs":  [
             {
                 "type":"box",
                 "vel": [0, 0, 0],
                 "particle_relaxing_factor":1.001,
-                "start_pos":[-1,-1, -1],
+                "start_pos":[-0.5,-0.5, -0.5],
                 "end_pos":[0.5,0.5, 0.5],
                 "layers":2,
                 "volume_frac":[1,0,0],

@@ -2,11 +2,12 @@ import numpy
 from sph import *
 import json
 import time
-
+from elastic import *
 
 """ init data structure """
 ngrid = Ngrid()
 fluid = Fluid(max_part_num=config.fluid_max_part_num[None])
+# fluid = Elasticity(max_part_num=config.fluid_max_part_num[None])
 bound = Fluid(max_part_num=config.bound_max_part_num[None])
 grid = Grid()
 globalvar = GlobalVariable()
@@ -38,6 +39,7 @@ def init_scenario():
     set_unused_par(fluid)
     set_unused_par(bound)
     SPH_update_color(fluid)
+    # fluid.init_pos0()
 
 ##################################### Write Json ############################################
 def write_scene_data():
@@ -100,88 +102,89 @@ def write_full_json(fname):
 ################################## End Write Json ############################################
 
 
-def sph_step():
-    # global div_iter_count, incom_iter_count
-    """ neighbour search """
-    ngrid.clear_node()
-    ngrid.encode(fluid)
-    ngrid.encode(bound)
-    ngrid.mem_shift()
-    ngrid.fill_node(fluid)
-    ngrid.fill_node(bound)
-    """ SPH clean value """
-    SPH_clean_value(fluid)
-    SPH_clean_value(bound)
-    """ SPH compute W and W_grad """
-    SPH_prepare_attr(ngrid, fluid, fluid)
-    SPH_prepare_attr(ngrid, fluid, bound)
-    SPH_prepare_attr(ngrid, bound, bound)
-    SPH_prepare_attr(ngrid, bound, fluid)
-    SPH_prepare_alpha_1(ngrid, fluid, fluid)
-    SPH_prepare_alpha_1(ngrid, fluid, bound)
-    SPH_prepare_alpha_2(ngrid, fluid, fluid)
-    SPH_prepare_alpha_2(ngrid, bound, fluid)
-    SPH_prepare_alpha(fluid)
-    SPH_prepare_alpha(bound)
-    """ IPPE SPH divergence """
-    globalvar.div_iter_count = 0
-    SPH_vel_2_vel_adv(fluid)
-    while globalvar.div_iter_count<config.iter_threshold_min[None] or fluid.compression[None]>config.divergence_threshold[None]:
-        IPPE_adv_psi_init(fluid)
-        # IPPE_adv_psi_init(bound)
-        IPPE_adv_psi(ngrid, fluid, fluid)
-        IPPE_adv_psi(ngrid, fluid, bound)
-        # IPPE_adv_psi(ngrid, bound, fluid)
-        IPPE_psi_adv_non_negative(fluid)
-        # IPPE_psi_adv_non_negative(bound)
-        IPPE_update_vel_adv(ngrid, fluid, fluid)
-        IPPE_update_vel_adv(ngrid, fluid, bound)
-        globalvar.div_iter_count+=1
-        if globalvar.div_iter_count>config.iter_threshold_max[None]:
-            break
-    SPH_vel_adv_2_vel(fluid)
-    """ SPH advection """
-    SPH_advection_gravity_acc(fluid)
-    SPH_advection_viscosity_acc(ngrid, fluid, fluid)
-    SPH_advection_surface_tension_acc(ngrid, fluid, fluid)
-    SPH_advection_update_vel_adv(fluid)
-    """ IPPE SPH pressure """
-    globalvar.incom_iter_count = 0
-    while globalvar.incom_iter_count<config.iter_threshold_min[None] or fluid.compression[None]>config.compression_threshold[None]:
-        IPPE_adv_psi_init(fluid)
-        # IPPE_adv_psi_init(bound)
-        IPPE_adv_psi(ngrid, fluid, fluid)
-        IPPE_adv_psi(ngrid, fluid, bound)
-        # IPPE_adv_psi(ngrid, bound, fluid)
-        IPPE_psi_adv_non_negative(fluid)
-        # IPPE_psi_adv_non_negative(bound)
-        IPPE_update_vel_adv(ngrid, fluid, fluid)
-        IPPE_update_vel_adv(ngrid, fluid, bound)
-        globalvar.incom_iter_count+=1
-        if globalvar.incom_iter_count>config.iter_threshold_max[None]:
-            break
-    """ debug info """
-    # print('iter div: ', globalvar.div_iter_count)
-    # print('incom div: ', globalvar.incom_iter_count)
-    """ WC SPH pressure """
-    # WC_pressure_val(fluid)
-    # WC_pressure_acce(ngrid, fluid, fluid)
-    # WC_pressure_acce(ngrid, fluid, bound)
-    # SPH_advection_update_vel_adv(fluid)
-    """ FBM procedure """
-    # while fluid.general_flag[None] > 0:
-    #     SPH_FBM_clean_tmp(fluid)
-    #     SPH_FBM_convect(ngrid, fluid, fluid)
-    #     SPH_FBM_diffuse(ngrid, fluid, fluid)
-    #     SPH_FBM_check_tmp(fluid)
-    """ SPH update """
-    # SPH_update_volume_frac(fluid)
-    SPH_update_mass(fluid)
-    SPH_update_pos(fluid)
-    SPH_update_energy(fluid)
-    # map_velocity(ngrid, grid, fluid)
-    # return globalvar.div_iter_count, globalvar.incom_iter_count
-    """ SPH debug """
+
+# def sph_step():
+#     # global div_iter_count, incom_iter_count
+#     """ neighbour search """
+#     ngrid.clear_node()
+#     ngrid.encode(fluid)
+#     ngrid.encode(bound)
+#     ngrid.mem_shift()
+#     ngrid.fill_node(fluid)
+#     ngrid.fill_node(bound)
+#     """ SPH clean value """
+#     SPH_clean_value(fluid)
+#     SPH_clean_value(bound)
+#     """ SPH compute W and W_grad """
+#     SPH_prepare_attr(ngrid, fluid, fluid)
+#     SPH_prepare_attr(ngrid, fluid, bound)
+#     SPH_prepare_attr(ngrid, bound, bound)
+#     SPH_prepare_attr(ngrid, bound, fluid)
+#     SPH_prepare_alpha_1(ngrid, fluid, fluid)
+#     SPH_prepare_alpha_1(ngrid, fluid, bound)
+#     SPH_prepare_alpha_2(ngrid, fluid, fluid)
+#     SPH_prepare_alpha_2(ngrid, bound, fluid)
+#     SPH_prepare_alpha(fluid)
+#     SPH_prepare_alpha(bound)
+#     """ IPPE SPH divergence """
+#     globalvar.div_iter_count = 0
+#     SPH_vel_2_vel_adv(fluid)
+#     while globalvar.div_iter_count<config.iter_threshold_min[None] or fluid.compression[None]>config.divergence_threshold[None]:
+#         IPPE_adv_psi_init(fluid)
+#         # IPPE_adv_psi_init(bound)
+#         IPPE_adv_psi(ngrid, fluid, fluid)
+#         IPPE_adv_psi(ngrid, fluid, bound)
+#         # IPPE_adv_psi(ngrid, bound, fluid)
+#         IPPE_psi_adv_non_negative(fluid)
+#         # IPPE_psi_adv_non_negative(bound)
+#         IPPE_update_vel_adv(ngrid, fluid, fluid)
+#         IPPE_update_vel_adv(ngrid, fluid, bound)
+#         globalvar.div_iter_count+=1
+#         if globalvar.div_iter_count>config.iter_threshold_max[None]:
+#             break
+#     SPH_vel_adv_2_vel(fluid)
+#     """ SPH advection """
+#     SPH_advection_gravity_acc(fluid)
+#     SPH_advection_viscosity_acc(ngrid, fluid, fluid)
+#     SPH_advection_surface_tension_acc(ngrid, fluid, fluid)
+#     SPH_advection_update_vel_adv(fluid)
+#     """ IPPE SPH pressure """
+#     globalvar.incom_iter_count = 0
+#     while globalvar.incom_iter_count<config.iter_threshold_min[None] or fluid.compression[None]>config.compression_threshold[None]:
+#         IPPE_adv_psi_init(fluid)
+#         # IPPE_adv_psi_init(bound)
+#         IPPE_adv_psi(ngrid, fluid, fluid)
+#         IPPE_adv_psi(ngrid, fluid, bound)
+#         # IPPE_adv_psi(ngrid, bound, fluid)
+#         IPPE_psi_adv_non_negative(fluid)
+#         # IPPE_psi_adv_non_negative(bound)
+#         IPPE_update_vel_adv(ngrid, fluid, fluid)
+#         IPPE_update_vel_adv(ngrid, fluid, bound)
+#         globalvar.incom_iter_count+=1
+#         if globalvar.incom_iter_count>config.iter_threshold_max[None]:
+#             break
+#     """ debug info """
+#     # print('iter div: ', globalvar.div_iter_count)
+#     # print('incom div: ', globalvar.incom_iter_count)
+#     """ WC SPH pressure """
+#     # WC_pressure_val(fluid)
+#     # WC_pressure_acce(ngrid, fluid, fluid)
+#     # WC_pressure_acce(ngrid, fluid, bound)
+#     # SPH_advection_update_vel_adv(fluid)
+#     """ FBM procedure """
+#     # while fluid.general_flag[None] > 0:
+#     #     SPH_FBM_clean_tmp(fluid)
+#     #     SPH_FBM_convect(ngrid, fluid, fluid)
+#     #     SPH_FBM_diffuse(ngrid, fluid, fluid)
+#     #     SPH_FBM_check_tmp(fluid)
+#     """ SPH update """
+#     # SPH_update_volume_frac(fluid)
+#     SPH_update_mass(fluid)
+#     SPH_update_pos(fluid)
+#     SPH_update_energy(fluid)
+#     # map_velocity(ngrid, grid, fluid)
+#     # return globalvar.div_iter_count, globalvar.incom_iter_count
+#     """ SPH debug """
 
 
 init_scenario()
@@ -267,6 +270,9 @@ def render2d():
 def run_step():
     globalvar.time_counter += 1
 
+    # init_neighb(ngrid, fluid, bound)  # only run one time
+    # fluid.init_neighbors(ngrid, fluid, fluid)
+
     while globalvar.time_count < globalvar.time_counter / config.gui_fps[None]:
         if globalvar.is_first_time:
             globalvar.time_start = time.time()
@@ -274,24 +280,16 @@ def run_step():
         """ computation loop """
         cfl_condition(fluid)
         globalvar.time_count += config.dt[None]
-        sph_step()
+        # sph_step()
+        sph_step(ngrid, fluid, bound, globalvar)
         globalvar.frame_div_iter += globalvar.div_iter_count
         globalvar.frame_incom_iter += globalvar.incom_iter_count
-        # print('current time: ', globalvar.time_count)
-        # # print('real time: ', globalvar.time_real)
-        # print('time step: ', config.dt[None])
 
-    # if globalvar.is_first_time:
-    #     globalvar.time_start = time.time()
-    #     globalvar.is_first_time = False
-    # """ computation loop """
-    # cfl_condition(fluid)
-    # globalvar.time_count += config.dt[None]
-    # sph_step()
     globalvar.time_real = time.time() - globalvar.time_start
     print('current time: ', globalvar.time_count)
     print('---------------------real time------------------------', globalvar.time_real)
     print('time step: ', config.dt[None])
+    print(fluid.pos)
     SPH_update_color(fluid)
 
 

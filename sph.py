@@ -111,7 +111,7 @@ def SPH_prepare_alpha(obj: ti.template()):
             obj.alpha[i] = 1e-4
 
 
-@ti.kerne
+@ti.kernel
 def SPH_advection_gravity_acc(obj: ti.template()):
     for i in range(obj.part_num[None]):
         obj.acce_adv[i] += config.gravity[None]
