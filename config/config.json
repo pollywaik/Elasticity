@@ -1,7 +1,7 @@
 {
 
-    "arch": "cpu",
-    "device_memory_GB":2,
+    "arch": "gpu",
+    "device_memory_GB":6,
 
     "solver_type":"VFSPH",
     "solver_wc_gamma":7,
@@ -12,12 +12,12 @@
 
     "solver_if_cfl": true,
     "solver_cs":100,
-    "solver_cfl_factor":0.5,
+    "solver_cfl_factor":0.2,
 
     "solver_neighb_range":1,
     "solver_neighb_grid_size_TO_global_part_size":2,
 
-    "solver_fbm_diffusion_term":0.000,
+    "solver_fbm_diffusion_term":0.50,
     "solver_fbm_convection_term":50,
     "solver_surface_tension_gamma":0,
 
@@ -25,8 +25,8 @@
     "gui_part_zoomer": 1.0,
     "gui_fps":30,
     "gui_canvas_bgcolor": [0.2, 0.2, 0.6],
-    "gui_camera_pos": [6.0, 1.0, 0.0],
-    "gui_camera_lookat": [0.0, 0.0, 0.0]
+    "gui_camera_pos": [5.0, 3.0, 0.0],
+    "gui_camera_lookat": [0.0, 3.0, 0.0]
 
 
 }
