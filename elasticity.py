@@ -7,13 +7,7 @@ def init_values(obj: ti.template()):
     obj.init_pos0()
     for i in range(obj.part_num[None]):
         obj.R[i] = ti.Matrix.identity(float, 3)
-        # print(obj.pos[i])
-        # print(obj.pos0[i])
-        # print(obj.R[i])
 
-    # print(self.pos0)
-    # print(self.mass)
-    # print(self.rest_volume)
 
 @ti.kernel
 def init_neighbors(ngrid: ti.template(), obj: ti.template(), nobj: ti.template(), config: ti.template()):
@@ -108,6 +102,7 @@ def elasticity_clean_value(obj: ti.template(), config: ti.template()):
                 obj.F[i][x, y] = 0
                 obj.grad_u[i][x, y] = 0
 
+        # print("clear", obj.F[i],obj.grad_u[i],obj.elastic_force[i],obj.stress[i],obj.R[i])
         # obj.grad_u[i] = ti.Matrix.zero(float, 3, 3)
         # obj.F[i] = ti.Matrix.zero(float, 3, 3)
 
@@ -116,13 +111,14 @@ def elasticity_clean_value(obj: ti.template(), config: ti.template()):
 
 ################################################# func ############################################
 @ti.kernel
-def elasticity_compute_W(obj: ti.template(), nobj: ti.template(), config: ti.template()):  # L W -- united
+def elasticity_compute_L(obj: ti.template(), nobj: ti.template(), config: ti.template()):  # L W -- united
     for i in range(obj.part_num[None]):
         for n in range(obj.neighbors_num[i]):
             j = obj.neighbors_initial[i, n]
+            # ti.static_print(n.dtype)
             xij_0 = obj.pos0[i] - nobj.pos0[j]
-            xji_0 = -xij_0
             r = xij_0.norm()
+            xji_0 = -xij_0
             obj.L[i] += nobj.rest_volume[j] * (W_grad(r, config) * xij_0 / r) @ xji_0.transpose()  # Matrix W,  (xij_0 / r)--A unit vector
             # if i == 1:
             #     print(obj.neighbors_num[i], j)
@@ -132,14 +128,10 @@ def elasticity_compute_W(obj: ti.template(), nobj: ti.template(), config: ti.tem
         if config.dim[None] == 2:
             obj.L[i][2, 2] = 1.0
 
-        for n in range(obj.neighbors_num[i]):
-            j = obj.neighbors_initial[i, n]
-            xij_0 = obj.pos0[i] - nobj.pos0[j]
-            r = xij_0.norm()
-            if obj.L[i].determinant() != 0:
-                obj.corrected_W[i] = obj.L[i].inverse() @ (W_grad(r, config) * xij_0 / r)  # corrected_W[i] todo
-        if i == 0:
-            print("W", obj.corrected_W[i])
+        if obj.L[i].determinant() != 0:  # invertible
+            obj.L[i] = obj.L[i].inverse()
+        else:
+            obj.L[i] = ti.Matrix.zero(float, 3, 3)
 
 
 @ti.func
@@ -160,18 +152,24 @@ def elasticity_compute_rotations(obj: ti.template(), nobj: ti.template(), config
         for n in range(obj.neighbors_num[i]):
         # for n in ti.static(range(obj.neighbors_num[i])):
             j = obj.neighbors_initial[i, n]
+            xij_0 = obj.pos0[i] - nobj.pos0[j]
+            r = xij_0.norm()
+            LW = obj.L[i] @ (W_grad(r, config) * xij_0 / r)
             xji = nobj.pos[j] - obj.pos[i]
-            F += nobj.rest_volume[j] * xji @ obj.corrected_W[i].transpose()
+            F += nobj.rest_volume[j] * xji @ LW.transpose()
 
         if config.dim[None] == 2:
             F[2, 2] = 1.0
 
-        extract_rotation(R_adv, F, 10)  # todo
-        obj.R[i] = R_adv
-        U, sig, V = ti.svd(F)
-        temp = U @ V.transpose()
+        # extract_rotation(R_adv, F, 10)  # todo
+        # obj.R[i] = R_adv
+        # obj.RL[i] = obj.R[i] @ obj.L[i]
 
-        print(F, obj.R[i], temp)
+        U, sig, V = ti.svd(F)
+        obj.R[i] = U @ V.transpose()
+        obj.RL[i] = obj.R[i] @ obj.L[i]
+        if i == 0:
+            print(obj.R[i], obj.RL[i])
 
 ################################################# solve rhs ############################################
 @ti.kernel
@@ -180,9 +178,11 @@ def elasticity_compute_stress(obj: ti.template(), nobj: ti.template(), config: t
         # for n in ti.static(range(obj.neighbors_num[i])):
         for n in range(obj.neighbors_num[i]):
             j = obj.neighbors_initial[i, n]
+            xij_0 = obj.pos0[i] - nobj.pos0[j]
+            r = xij_0.norm()
+            RLW = obj.RL[i] @ (W_grad(r, config) * xij_0 / r)
+
             xji = nobj.pos[j] - obj.pos[i]
-            # xji_0 = nobj.pos0[j] - obj.pos0[i]  # initial neighbor
-            RLW = obj.R[i]@obj.corrected_W[i]
             # obj.F[i] += nobj.rest_volume[j] * (xji - obj.R[i] @ xji_0) @ RLW.transpose() # Matrix W_grad(r)
             obj.F[i] += nobj.rest_volume[j] * xji @ RLW.transpose()  # Matrix W_grad(r) simplify todo
 
@@ -205,26 +205,32 @@ def elasticity_compute_stress(obj: ti.template(), nobj: ti.template(), config: t
         obj.stress[i][0] += ltrace
         obj.stress[i][1] += ltrace
         obj.stress[i][2] += ltrace
-        print("F stress", obj.F[i], obj.stress[i])
+        if i == 0:
+            print("F stress", obj.F[i], obj.stress[i])
 
 @ti.kernel
-def elasticity_compute_force(obj: ti.template(), nobj: ti.template()):  # f(xt, x0)
+def elasticity_compute_force(obj: ti.template(), nobj: ti.template(), config: ti.template()):  # f(xt, x0)
     for i in range(obj.part_num[None]):
         # for n in ti.static(range(obj.neighbors_num[i])):
         for n in range(obj.neighbors_num[i]):
             j = obj.neighbors_initial[i, n]
-            RLWi = obj.R[i] @ obj.corrected_W[i]
-            RLWj = nobj.R[j] @ nobj.corrected_W[j]
+            xij_0 = obj.pos0[i] - nobj.pos0[j]
+            r = xij_0.norm()
+            RLWi = obj.RL[i] @ (W_grad(r, config) * xij_0 / r)
+            RLWj = -nobj.RL[j] @ (W_grad(r, config) * xij_0 / r)
+
             obj.elastic_force[i] += obj.rest_volume[i] * nobj.rest_volume[j] * (
                     ti.Vector(multi_6v_with_3v(obj.stress[i], RLWi)) - ti.Vector(multi_6v_with_3v(nobj.stress[j], RLWj)))
-        print("elastic_force", obj.elastic_force[i])
+        if i == 0:
+            print("elastic_force", obj.elastic_force[i])
 
 
 @ti.kernel
 def elasticity_compute_rhs(obj: ti.template(), config: ti.template()):
     for i in range(obj.part_num[None]):
         obj.b[i] = obj.vel[i] + config.dt[None] * (obj.acce_adv[i] + (1/obj.mass[i]) * obj.elastic_force[i])
-        print("obj.b[i]", obj.b[i])
+        if i == 0:
+            print("obj.b[i]", obj.b[i])
 ################################################# solve iter############################################
 
 @ti.func
@@ -232,6 +238,9 @@ def elasticity_iter_init(i: ti.template(), obj: ti.template()):
     # for i in range(obj.part_num[None]):
     obj.r[i] = obj.b[i]  # r0 = b - Ax0
     obj.p[i] = obj.r[i]  # p0 = r0
+    obj.vel_adv[i] = ti.Vector([0, 0, 0])
+    if i == 0:
+        print("r p", obj.r[i], obj.p[i])
 
 
 @ti.func
@@ -240,7 +249,9 @@ def elasticity_iter_stress(i: ti.template(), obj: ti.template(), nobj: ti.templa
         # for n in ti.static(range(obj.neighbors_num[i])):
     for n in range(obj.neighbors_num[i]):
         j = obj.neighbors_initial[i, n]
-        RLW = obj.R[i] @ obj.corrected_W[i]
+        xij_0 = obj.pos0[i] - nobj.pos0[j]
+        r = xij_0.norm()
+        RLW = obj.RL[i] @ (W_grad(r, config) * xij_0 / r)
         pji = nobj.p[j] - obj.p[i]
         obj.grad_u[i] += nobj.rest_volume[j] * pji @ RLW.transpose()
     obj.grad_u[i] *= config.dt[None]
@@ -261,26 +272,36 @@ def elasticity_iter_stress(i: ti.template(), obj: ti.template(), nobj: ti.templa
     obj.stress_adv[i][1] += ltrace
     obj.stress_adv[i][2] += ltrace
 
+    if i == 0:
+        print("u stress", obj.grad_u[i], obj.stress_adv[i] )
 
 @ti.func
-def elasticity_iter_force_adv(i: ti.template(), obj: ti.template(), nobj: ti.template()):  # f(dtp, 0)
+def elasticity_iter_force_adv(i: ti.template(), obj: ti.template(), nobj: ti.template(), config: ti.template()):  # f(dtp, 0)
     # for i in range(obj.part_num[None]):
         # for n in ti.static(range(obj.neighbors_num[i])):
     for n in range(obj.neighbors_num[i]):
         j = obj.neighbors_initial[i, n]
-        RLWi = obj.R[i] @ obj.corrected_W[i]
-        RLWj = nobj.R[j] @ nobj.corrected_W[j]
+        xij_0 = obj.pos0[i] - nobj.pos0[j]
+        r = xij_0.norm()
+        RLWi = obj.RL[i] @ (W_grad(r, config) * xij_0 / r)
+        RLWj = -nobj.RL[j] @ (W_grad(r, config) * xij_0 / r)
         obj.elastic_force_adv[i] += obj.rest_volume[i] * nobj.rest_volume[j] * (
                 ti.Vector(multi_6v_with_3v(obj.stress_adv[i], RLWi)) - ti.Vector(multi_6v_with_3v(nobj.stress_adv[j], RLWj)))
+
+    if i == 0:
+        print("f_a", obj.elastic_force_adv[i])
 
 
 @ti.func
 def elasticity_iter_Ap(i: ti.template(), obj: ti.template(), nobj: ti.template(), config: ti.template()):
     elasticity_iter_stress(i, obj, nobj, config)
-    elasticity_iter_force_adv(i, obj, nobj)
+    elasticity_iter_force_adv(i, obj, nobj, config)
     # for i in range(obj.part_num[None]):
     obj.Ap[i] = obj.p[i] - (1 / obj.mass[i]) * config.dt[None] * obj.elastic_force_adv[i]
 
+
+    if i == 0:
+        print("Ap", obj.Ap[i])
 
 @ti.func
 def elasticity_iter_update_p(i: ti.template(), obj: ti.template()):  # v_elastic
@@ -299,6 +320,9 @@ def elasticity_iter_update_p(i: ti.template(), obj: ti.template()):  # v_elastic
     beta = new_rTr[0, 0] / rTr[0, 0]
     obj.p[i] = obj.r[i] + beta * obj.p[i]
 
+    if i == 0:
+        print("v p", obj.vel_adv[i], obj.p[i])
+
 @ti.kernel
 def elasticity_iter_vel_adv(obj: ti.template(), nobj: ti.template(), config: ti.template()):
     ''' solve linear system'''
@@ -310,7 +334,7 @@ def elasticity_iter_vel_adv(obj: ti.template(), nobj: ti.template(), config: ti.
 
             elasticity_iter_Ap(i, obj, nobj, config)
             elasticity_iter_update_p(i, obj)
-            print("--------------------------", iter, obj.elastic_force_adv[i], obj.Ap[i], obj.p[i])
+            print("-----------", iter)
 
 ################################################# acc ############################################
 
@@ -318,6 +342,10 @@ def elasticity_iter_vel_adv(obj: ti.template(), nobj: ti.template(), config: ti.
 def SPH_advection_elasticity_acc(obj: ti.template(), config: ti.template()):
     for i in range(obj.part_num[None]):
         obj.acce_adv[i] += (obj.vel_adv[i] - obj.vel[i])/config.dt[None]
+
+        if i == 0:
+            print("dt va v acc", config.dt[None], obj.vel_adv[i], obj.vel[i], obj.acce_adv[i])
+
 
 
 def init_elasticity_value(ngrid, fluid, bound, config):
@@ -331,7 +359,7 @@ def init_elasticity_value(ngrid, fluid, bound, config):
     ngrid.fill_node(fluid, config)
     init_neighbors(ngrid, fluid, fluid, config)
 
-    elasticity_compute_W(fluid, fluid, config)  # todo elastic force only compute in same phase
+    elasticity_compute_L(fluid, fluid, config)  # todo elastic force only compute in same phase
     print("done init elasticity value")
 
 
@@ -340,7 +368,7 @@ def elasticity_step(fluid, config):
     ''' RHS '''
     elasticity_compute_rotations(fluid, fluid, config)
     elasticity_compute_stress(fluid, fluid, config)
-    elasticity_compute_force(fluid, fluid)
+    elasticity_compute_force(fluid, fluid, config)
     elasticity_compute_rhs(fluid, config)  # compute right hand side vector b
     elasticity_iter_vel_adv(fluid, fluid, config)  # cg
 
@@ -398,8 +426,9 @@ def sph_elasticity_step(ngrid, fluid, bound, config):
     # SPH_advection_surface_tension_acc(ngrid, fluid, fluid, config)
 
     # todo elasticity_step
+
     elasticity_step(fluid, config)
-    elasticity_cfl_condition(fluid, config)
+    # elasticity_cfl_condition(fluid, config)
 
     SPH_advection_update_vel_adv(fluid, config)
     """ IPPE SPH pressure """

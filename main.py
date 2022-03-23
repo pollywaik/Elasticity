@@ -18,8 +18,8 @@ pre_config = Pre_config(config_buffer, scenario.scenario_buffer)
 # config = Config(pre_config, config_buffer, scenario.scenario_buffer)
 config = ConfigElasticity(pre_config, config_buffer, scenario.scenario_buffer)  # todo
 print('Done configurating')
-print(config.elasticity_mu[None])
-print(config.elasticity_lambda[None])
+print(config.elasticity_mu[None], config.elasticity_lambda[None])
+
 
 ngrid = Ngrid(config)
 # fluid = Fluid(config.fluid_max_part_num[None], pre_config, config)

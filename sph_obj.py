@@ -552,9 +552,8 @@ class Elasticity(Fluid):
         self.neighbors_num = ti.field(int)  # neighbor particle counter
 
         self.L = ti.Matrix.field(3, 3, float)  # correction matrix
-        self.corrected_W = ti.Vector.field(3, float)  # corrected kernel function
-        self.R = ti.Matrix.field(3, 3, float)  # rotation matrix
-        # self.RL = ti.Matrix.field(3, 3, float, max_part_num)  # rotation matrix * correction matrix
+        self.R = ti.Matrix.field(3, 3, float)  # rotation matrix  init_identity
+        self.RL = ti.Matrix.field(3, 3, float)  # corrected kernel function
 
         # solver rhs
         self.F = ti.Matrix.field(3, 3, float)  # deformation gradient
@@ -572,7 +571,7 @@ class Elasticity(Fluid):
         self.Ap = ti.Vector.field(3, float)
 
         # put for-each-particle attributes in this list to register them!
-        self.elas_attr_list = [self.pos0, self.neighbors_num, self.L, self.corrected_W, self.R, self.F, self.stress,
+        self.elas_attr_list = [self.pos0, self.neighbors_num, self.L, self.R, self.RL, self.F, self.stress,
                                self.elastic_force, self.b, self.r, self.p, self.grad_u, self.stress_adv,
                                self.elastic_force_adv, self.Ap]
 

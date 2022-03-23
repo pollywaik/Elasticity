@@ -273,14 +273,16 @@ class ConfigElasticity(Config):
         super(ConfigElasticity, self).__init__(pre_config, config_buffer, scenario_buffer)
         self.youngs_modulus = ti.field(float, ())
         self.poisson_ratio = ti.field(float, ())
-        self.elasticity_mu = ti.field(float, ())  # μ =E/2(1+ν)
-        self.elasticity_lambda = ti.field(float, ())  # λ=Eν/(1+ν)(1−2ν)
+        self.elasticity_mu = ti.field(float, ())  # μ =E/2(1+ν) G
+        self.elasticity_lambda = ti.field(float, ())  # λ=Eν/(1+ν)(1−2ν) K = λ + 2μ/3
 
         self.init_elasticity_parameters()
 
     def init_elasticity_parameters(self):
         self.youngs_modulus[None] = 2e3
         self.poisson_ratio[None] = 0.2
-        self.elasticity_mu[None] = self.youngs_modulus[None] / (2.0 * (1.0 + self.poisson_ratio[None]))  # μ =E/2(1+ν)
-        self.elasticity_lambda[None] = self.youngs_modulus[None] * self.poisson_ratio[None] / (
-                (1.0 + self.poisson_ratio[None]) * (1.0 - 2.0 * self.poisson_ratio[None]))  # λ=Eν/(1+ν)(1−2ν)
+        # self.elasticity_mu[None] = self.youngs_modulus[None] / (2.0 * (1.0 + self.poisson_ratio[None]))  # μ =E/2(1+ν)
+        self.elasticity_mu[None] = 1e4
+        self.elasticity_lambda[None] = 1e4 / 3
+        # self.elasticity_lambda[None] = self.youngs_modulus[None] * self.poisson_ratio[None] / (
+        #         (1.0 + self.poisson_ratio[None]) * (1.0 - 2.0 * self.poisson_ratio[None]))  # λ=Eν/(1+ν)(1−2ν)

@@ -108,5 +108,4 @@ def init_scenario(fluid, bound, scenario, config):
 
 # todo
 def init_elasticity_scenario(ngrid, fluid, bound, config):
-    # if type(fluid) == Elasticity:
     init_elasticity_value(ngrid, fluid, bound, config)
