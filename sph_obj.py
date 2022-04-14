@@ -51,6 +51,8 @@ class Fluid:
         self.alpha_1 = ti.Vector.field(config.dim[None], float)  # 1st term of alpha
         self.alpha_2 = ti.field(float)  # 2nd term of alpha
         self.drift_vel = ti.Vector.field(config.dim[None], float)
+        self.phase_vel = ti.Vector.field(config.dim[None], float)
+        self.phase_acc = ti.Vector.field(config.dim[None], float)
         # FBM
         self.fbm_zeta = ti.field(float)
         self.fbm_acce = ti.static(self.acce)
@@ -71,25 +73,11 @@ class Fluid:
             self.sph_psi = ti.static(self.sph_density)
             self.rest_psi = ti.static(self.rest_density)
 
-        # display
-        self.pos_disp = ti.Vector.field(config.dim[None], float)
-
-        # transform help
-        self.transform_tmp_pos = ti.Vector.field(config.dim[None] + 1, float)
-
-        # JL21
-        self.F_mid = ti.Vector.field(config.dim[None], float)
-        self.vel_mid_phase = ti.Vector.field(config.dim[None], float)
-        self.vel_mid = ti.Vector.field(config.dim[None], float)
-        self.vel_phase = ti.Vector.field(config.dim[None], float)
-        self.lamb = ti.field(float)
-
         # put for-each-particle attributes in this list to register them!
         self.attr_list = [self.color, self.color_vector, self.mass, self.rest_density, self.rest_volume, self.pressure,self.pressure_force,
                           self.volume_frac, self.volume_frac_tmp, self.pos, self.gui_2d_pos, self.vel, self.vel_adv,self.acce, self.acce_adv,
                           self.W, self.W_grad, self.sph_density, self.sph_compression, self.psi_adv, self.alpha, self.alpha_1, self.alpha_2, self.fbm_zeta, self.normal,
-                          self.neighb_cell_seq, self.neighb_in_cell_seq, self.neighb_cell_structured_seq, self.ones,self.flag, self.pos_disp, self.transform_tmp_pos,
-                          self.F_mid, self.vel_mid, self.lamb]
+                          self.neighb_cell_seq, self.neighb_in_cell_seq, self.neighb_cell_structured_seq, self.ones,self.flag]
 
         # allocate memory for attributes (1-D fields)
         for attr in self.attr_list:
@@ -97,15 +85,10 @@ class Fluid:
         # allocate memory for drift velocity (2-D field)
         ti.root.dense(ti.i, self.max_part_num).dense(ti.j, config.phase_num[None]).place(self.drift_vel)
         self.attr_list.append(self.drift_vel)  # add drift velocity to attr_list
-        ti.root.dense(ti.i, self.max_part_num).dense(ti.j, config.phase_num[None]).place(self.vel_mid_phase)
-        self.attr_list.append(self.vel_mid_phase)
-        ti.root.dense(ti.i, self.max_part_num).dense(ti.j, config.phase_num[None]).place(self.vel_phase)
-        self.attr_list.append(self.vel_phase)
-
-        self.obj_part_range_from_name={}
-
-        self.unused_pos = ti.Vector.field(config.dim[None], float, ())
-        self.unused_pos.from_numpy(np.array([533799.0] * config.dim[None], dtype=np.float32))
+        ti.root.dense(ti.i, self.max_part_num).dense(ti.j, config.phase_num[None]).place(self.phase_vel)
+        self.attr_list.append(self.phase_vel)  # add drift velocity to attr_list
+        ti.root.dense(ti.i, self.max_part_num).dense(ti.j, config.phase_num[None]).place(self.phase_acc)
+        self.attr_list.append(self.phase_acc)  # add drift velocity to attr_list
 
         self.init()
 
@@ -133,32 +116,7 @@ class Fluid:
                        relaxing_factor, config):  # add relaxing factor for each cube
         spacing = config.part_size[1] * relaxing_factor
         matrix_shape, padding = self.scene_add_help_centering(start_pos, end_pos, spacing)
-
         self.push_matrix(np.ones(matrix_shape, dtype=np.bool_), start_pos + padding, spacing, volume_frac, vel, color, config)
-
-    #add particles from inlet
-    def scene_add_from_inlet(self, center, size, norm, speed, volume_frac, color,
-                       relaxing_factor, config):
-        spacing = config.part_size[1] * relaxing_factor
-        matrix_shape, padding = self.scene_add_help_centering([0]*len(size), size, spacing)
-        seq=[]
-        if len(matrix_shape) == 2:
-            if norm[0]==0:
-                u=np.array([1,0,0])
-            else:
-                u=np_normalize(np.array([-norm[2]/norm[0],0,1]))
-            v=np_normalize(np.cross(u,norm))
-            size=np.array(size)-padding
-            start=np.array(center)-(size[0]*u+size[1]*v)/2
-            for i in range(matrix_shape[0]):
-                for j in range(matrix_shape[1]):
-                    seq.append(start+(float(i)*u+float(j)*v)*spacing)
-        else:
-            raise Exception('scenario ERROR: can only add 3D inlets.')
-        pos_seq=np.array(seq)
-        vel=np.array(norm)*speed
-        self.push_part_seq(len(pos_seq), color, pos_seq, ti.Vector(volume_frac), ti.Vector(vel), config)
-
 
     # add 3D or 2D hollow box to scene, with several layers
     def scene_add_box(self, start_pos, end_pos, layers, volume_frac, vel, color, relaxing_factor, config):
@@ -174,7 +132,7 @@ class Fluid:
             raise Exception('scenario error: can only add 2D or 3D boxes')
         self.push_matrix(box, start_pos + padding, spacing, volume_frac, vel, color, config)
 
-    def scene_add_ply(self, p_sum, pos_seq, volume_frac, vel, color, config):
+    def push_part_from_ply(self, p_sum, pos_seq, volume_frac, vel, color, config):
         self.push_part_seq(p_sum, color, pos_seq, ti.Vector(volume_frac), ti.Vector(vel), config)
 
     # add particles according to true and false in the matrix
@@ -310,97 +268,28 @@ class Fluid:
             pos_seq -= (np.array(center_pos) + np.array(size) / 2)
             self.push_part_seq(p_sum, color, pos_seq, ti.Vector(volume_frac), config)
 
-    def push_scene_obj(self, param, config):
-        pre_part_cnt=self.part_num[None]
-        if param['type'] == 'cube':
-            self.scene_add_cube(param['start_pos'], param['end_pos'], param['volume_frac'], param['vel'], int(param['color'], 16), param['particle_relaxing_factor'],config)
-        elif param['type'] == 'box':
-            self.scene_add_box(param['start_pos'], param['end_pos'], param['layers'], param['volume_frac'], param['vel'], int(param['color'], 16), param['particle_relaxing_factor'],config)
-        elif param['type'] == 'ply':
-            verts = read_ply(param['file_name'])
-            if 'start_pos' in param:
-                verts += param['start_pos']
-            self.scene_add_ply(len(verts), verts, param['volume_frac'], param['vel'], int(param['color'], 16),config)
-        else:
-            raise Exception('scenario ERROR: object type unsupported:',
-                param['type'] if 'type' in param else 'None')
-        part_range=(pre_part_cnt,self.part_num[None])
-        if 'name' in param:
-            self.obj_part_range_from_name[param['name']] = part_range
+    def push_part_from_ply(self, scenario_buffer, obj_name, config):
+        for obj in scenario_buffer:
+            if (obj == obj_name):
+                for param in scenario_buffer[obj]['objs']:
+                    if param['type'] == 'cube':
+                        self.scene_add_cube(param['start_pos'], param['end_pos'], param['volume_frac'], param['vel'],
+                                            int(param['color'], 16), param['particle_relaxing_factor'], config)
+                    elif param['type'] == 'box':
+                        self.scene_add_box(param['start_pos'], param['end_pos'], param['layers'], param['volume_frac'],
+                                            param['vel'], int(param['color'], 16), param['particle_relaxing_factor'], config)
+                    elif param['type'] == 'ply':
+                        verts = read_ply(trim_path_dir(param['file_name']))
+                        self.push_part_seq(len(verts), int(param['color'], 16), verts, ti.Vector(param['volume_frac']), ti.Vector(param['vel']),
+                                                config)
+        
+        set_unused_par(self, config)
 
     @ti.kernel
     def update_color_vector_from_color(self):
         for i in range(self.part_num[None]):
             color = hex2rgb(self.color[i])
             self.color_vector[i] = color
-
-    @ti.kernel
-    def display_all(self):
-        for i in range(self.part_num[None]):
-            self.pos_disp[i] = self.pos[i]
-    
-    @ti.kernel
-    def display_part_range(self, start_id: int, end_id: int):
-        for i in range(self.part_num[None]):
-            if i >= start_id and i < end_id:
-                self.pos_disp[i] = self.pos[i]
-            else:
-                self.pos_disp[i] = self.unused_pos[None]
-
-    def get_part_range_from_name(self, name):
-        if name in self.obj_part_range_from_name:
-            return self.obj_part_range_from_name[name]
-        else:
-            warn('get_part_range_from_name WARNING: no object named \'', name, '\'')
-            return (0, 0)
-
-    @ti.kernel
-    def set_vel_part_range(self, start_id: int, end_id: int, vel:ti.template()):
-        for i in range(start_id,end_id):
-            self.vel[i] = vel[None]
-    
-    @ti.kernel
-    def update_pos_part_range(self, start_id: int, end_id: int, config:ti.template()):
-        for i in range(start_id,end_id):
-            self.pos[i] += self.vel[i] * config.dt[None]
-
-    ######################### transform functions (too slow to be used every timestep) ##########################
-
-    @ti.kernel
-    def transform_part_range(self, start_id: int, end_id: int, config:ti.template()):
-        dim = ti.static(config.gravity.n)        
-        for i in range(start_id,end_id):
-            for j in ti.static(range(dim)):
-                self.transform_tmp_pos[i][j] = self.pos[i][j]
-            self.transform_tmp_pos[i][dim] = 1.0
-            self.transform_tmp_pos[i] = config.transform_matrix[None] @ self.transform_tmp_pos[i]
-            for j in ti.static(range(dim)):
-                self.pos[i][j] = self.transform_tmp_pos[i][j]
-
-    # transform with velocity update
-    @ti.kernel
-    def move_part_range(self, start_id: int, end_id: int, config:ti.template()):
-        dim = ti.static(config.gravity.n)
-        for i in range(start_id,end_id):
-            pre_pos = self.pos[i]
-            for j in ti.static(range(dim)):
-                self.transform_tmp_pos[i][j] = self.pos[i][j]
-            self.transform_tmp_pos[i][dim] = 1.0
-            self.transform_tmp_pos[i] = config.transform_matrix[None] @ self.transform_tmp_pos[i]
-            for j in ti.static(range(dim)):
-                self.pos[i][j] = self.transform_tmp_pos[i][j]
-            self.vel[i] = (self.pos[i] - pre_pos) / config.dt[None]
-
-    def move_scene_obj(self, name, transform_matrix, config):
-        config.transform_matrix.from_numpy(transform_matrix)
-        a,b = self.get_part_range_from_name(name)
-        self.move_part_range(a, b, config)
-
-    def transform_scene_obj(self, name, transform_matrix, config):
-        config.transform_matrix.from_numpy(transform_matrix)
-        a,b = self.get_part_range_from_name(name)
-        self.transform_part_range(a, b, config)
-    
 
 class Part_buffer:
     def __init__(self, part_num, config):
@@ -452,145 +341,5 @@ class Ngrid:
                     self.node_part_shift_count[obj.neighb_cell_seq[i]], 1)
                 self.part_pid_in_node[obj.neighb_in_cell_seq[i]] = i
                 self.part_uid_in_node[obj.neighb_in_cell_seq[i]] = obj.uid
-
-class Gui():
-    def __init__(self, config):
-        self.window = ti.ui.Window("Fluid Simulation", (config.gui_res[None][0], config.gui_res[None][1]), vsync=True)
-        self.canvas = self.window.get_canvas()
-        self.scene = ti.ui.Scene()
-        self.camera = ti.ui.make_camera()
-        self.camera.position(config.gui_camera_pos[None][0], config.gui_camera_pos[None][1], config.gui_camera_pos[None][2])
-        self.camera.lookat(config.gui_camera_lookat[None][0], config.gui_camera_lookat[None][1], config.gui_camera_lookat[None][2])
-        self.camera.fov(55)
-        self.background_color = (
-        (config.gui_canvas_bgcolor[None][0], config.gui_canvas_bgcolor[None][1], config.gui_canvas_bgcolor[None][2]))
-        self.ambient_color = (0.7, 0.7, 0.7)
-        self.dispaly_radius = config.part_size[1] * 0.5
-
-        # Toggles
-        self.show_bound = False
-        self.show_help = True
-        self.show_run_info = True
-        self.op_system_run = False
-        self.op_write_file = False
-        self.op_refresh_window = True
-        self.show_rod = True
-    
-    def monitor_listen(self):
-        self.camera.track_user_inputs(self.window, movement_speed=0.03, hold_key=ti.ui.RMB)
-
-        if self.show_help:
-            self.window.GUI.begin("options", 0.05, 0.3, 0.2, 0.2)
-            self.window.GUI.text("h: help")
-            self.window.GUI.text("w: front")
-            self.window.GUI.text("s: back")
-            self.window.GUI.text("a: left")
-            self.window.GUI.text("d: right")
-            self.window.GUI.text("RMB: rotate")
-            self.window.GUI.text("b: display boundary")
-            self.window.GUI.text("r: run system")
-            self.window.GUI.text("f: write file")
-            self.window.GUI.text("c: refresh window")
-            self.window.GUI.end()
-
-        if self.window.get_event(ti.ui.PRESS):
-            # run
-            if self.window.event.key == 'r':
-                self.op_system_run = not self.op_system_run
-                print("start to run:", self.op_system_run)
-
-            if self.window.event.key == 'f':
-                self.op_write_file = not self.op_write_file
-                print("write file:", self.op_write_file)
-
-            if self.window.event.key == 'b':
-                self.show_bound = not self.show_bound
-                print("show boundary:", self.show_bound)
-
-            if self.window.event.key == 'i':
-                self.show_run_info = not self.show_run_info
-                print("show run information:", self.show_run_info)
-
-            if self.window.event.key == 'h':
-                self.show_help = not self.show_help
-                print("show help:", self.show_help)
-            
-            if self.window.event.key == 'c':
-                self.op_refresh_window = not self.op_refresh_window
-                print("refresh window:", self.op_refresh_window)
-
-            if self.window.event.key == 'n':
-                self.show_rod = not self.show_rod
-                print("show rod:", self.show_rod)
-
-    def env_set_up(self):
-        self.canvas.set_background_color(self.background_color)
-
-    def scene_setup(self):
-        self.scene.set_camera(self.camera)
-        self.scene.ambient_light(self.ambient_color)
-        self.scene.point_light(pos=(2, 1.5, -1.5), color=(0.8, 0.8, 0.8))
-
-    def scene_add_objs(self, obj, radius):
-        self.scene.particles(obj.pos_disp, per_vertex_color=obj.color_vector, radius=radius)
-
-    def scene_render(self):
-        self.canvas.scene(self.scene)  # Render the scene
-
-    def window_show(self):
-        self.window.show()
-
-
-# todo
-@ti.data_oriented
-class Elasticity(Fluid):
-    def __init__(self, max_part_num, pre_config, config):
-        super(Elasticity, self).__init__(max_part_num, pre_config, config)
-        self.pos0 = ti.Vector.field(config.dim[None], int)  # particle initial position
-
-        self.neighbors_initial = ti.field(int)  # neighbors_initial[i,j] -- initial neighbor particle
-        self.neighbors_num = ti.field(int)  # neighbor particle counter
-
-        self.L = ti.Matrix.field(3, 3, float)  # correction matrix
-        self.R = ti.Matrix.field(3, 3, float)  # rotation matrix  init_identity
-        self.RL = ti.Matrix.field(3, 3, float)  # corrected kernel function
-
-        # solver rhs
-        self.F = ti.Matrix.field(3, 3, float)  # deformation gradient
-        self.strain = ti.Vector.field(6, float, ())  # temp
-        self.stress = ti.Vector.field(6, float)
-        self.elastic_force = ti.Vector.field(3, float)
-
-        # matrix free conjugate gradient method
-        self.b = ti.Vector.field(3, float)
-        self.r = ti.Vector.field(3, float)  # residual r0 = b
-        self.p = ti.Vector.field(3, float)  # p0 = r0
-        self.grad_u = ti.Matrix.field(3, 3, float)  # gradient of the displacement field
-        self.stress_adv = ti.Vector.field(6, float)
-        self.elastic_force_adv = ti.Vector.field(3, float)  # next time step, temp force
-        self.Ap = ti.Vector.field(3, float)
-
-        # put for-each-particle attributes in this list to register them!
-        self.elas_attr_list = [self.pos0, self.neighbors_num, self.L, self.R, self.RL, self.F, self.stress,
-                               self.elastic_force, self.b, self.r, self.p, self.grad_u, self.stress_adv,
-                               self.elastic_force_adv, self.Ap]
-
-        # allocate memory for attributes (1-D fields)
-        for attr in self.elas_attr_list:
-            ti.root.dense(ti.i, self.max_part_num).place(
-                attr)  # SOA(see Taichi advanced layout: https://docs.taichi.graphics/docs/lang/articles/advanced/layout#from-shape-to-tirootx)
-
-        # allocate memory for drift velocity (2-D field)
-        ti.root.dense(ti.i, self.max_part_num).dense(ti.j, 30).place(self.neighbors_initial)
-        self.elas_attr_list.append(self.neighbors_initial)
-
-        self.init_elas_attr()
-
-    def init_elas_attr(self):
-        for attr in self.elas_attr_list:
-            attr.fill(0)
-
-    def init_pos0(self):
-        self.pos0 = self.pos
 
 

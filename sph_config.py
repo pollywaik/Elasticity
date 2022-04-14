@@ -1,14 +1,11 @@
 import taichi as ti
 import numpy as np
 import math
-from math import cos, sin
 import sys
 import getopt
 import json
 from plyfile import *
 import os
-import traceback
-import warnings
 
 def read_param(param, paramname):
     if param is None:
@@ -93,17 +90,13 @@ class Config:
         self.sim_space_lb = ti.Vector.field(pre_config.sim_dim, float, ())  # min coordination of simulation space
         self.sim_space_rt = ti.Vector.field(pre_config.sim_dim, float, ())  # max coordination of simulation space
         self.dynamic_viscosity = ti.field(float, ())
-        self.artificial_viscosity = ti.field(float, ())
         self.gravity = ti.Vector.field(pre_config.sim_dim, float, ())
         self.phase_num = ti.field(int, ())
         self.phase_rest_density = ti.Vector.field(pre_config.phase_num, float, ())  # rest density of each phase
         self.phase_rgb = ti.Vector.field(3, float, pre_config.phase_num)
-        self.time_count = ti.field(float,())
-        self.time_counter = ti.field(int,())
 
         # solver
         self.dt = ti.field(float, ())
-        self.solver_type = ""
         # kernel function
         self.kernel_h = ti.field(float, 5)
         self.kernel_sig = ti.field(float, 4)  # normalizer for kernel W for different dimensions
@@ -114,11 +107,6 @@ class Config:
         self.compression_threshold = ti.field(float, ())  # error threshold for divergence free solver
         self.iter_threshold_min = ti.field(int, ())  # min iterations for solvers
         self.iter_threshold_max = ti.field(int, ())  # max iterations for solvers
-        self.is_compressible = ti.field(int, ())  # is_conpressible
-        self.div_iter_count = ti.field(int, ())  # divergence iterations per step
-        self.incom_iter_count = ti.field(int, ())  # incompressible iterations per step
-        self.frame_div_iter = ti.field(int, ()) # divergence iterations per frame
-        self.frame_incom_iter = ti.field(int, ()) # incompressible iterations per frame
 
         # CFL
         self.if_cfl = ti.field(int, ())  # 1: use cfl, 0: do not use cfl
@@ -148,19 +136,6 @@ class Config:
         self.gui_camera_lookat = ti.Vector.field(3, float, ())
         self.gui_canvas_bgcolor = ti.Vector.field(3, float, ())
 
-        # rotate
-        self.start_id = ti.field(int, ())
-        self.end_id = ti.field(int, ())
-        self.vel_down_np = np.array([0.0, -3.0, 0.0])
-        self.vel_rot_np = np.zeros(3)
-        self.ang_spd = ti.field(float, ())
-        self.rot_r = ti.field(float, ())
-        self.time_down = ti.field(float, ())
-        self.rod_vel = ti.Vector.field(3, float, ())
-
-        #transform_help
-        self.transform_matrix = ti.Matrix.field(pre_config.sim_dim + 1,pre_config.sim_dim + 1,float,())
-
         self.sub_init(pre_config, config_buffer, scenario_buffer)
 
     def assign_phase_color(self, hex, phase):
@@ -170,7 +145,6 @@ class Config:
         self.dim[None] = pre_config.sim_dim
         self.part_size[1] = read_param(scenario_buffer['sim_env']['global_part_size'], 'global_part_size')
         self.dynamic_viscosity[None] = read_param(scenario_buffer['sim_env']['global_dynamic_viscosity'], 'global_dynamic_viscosity')
-        self.artificial_viscosity[None] = read_param(scenario_buffer['sim_env']['global_artificial_viscosity'], 'global_artificial_viscosity')
         self.sim_space_lb[None] = read_param(scenario_buffer['sim_env']['sim_space_lb'], 'sim_space_lb')
         self.sim_space_rt[None] = read_param(scenario_buffer['sim_env']['sim_space_rt'], 'sim_space_rt')
         self.gravity[None] = read_param(scenario_buffer['sim_env']['gravity'], 'gravity')
@@ -179,13 +153,6 @@ class Config:
         self.fluid_max_part_num[None] = int(read_param(scenario_buffer['fluid']['max_part_num'], 'fluid_max_part_num'))
         self.bound_max_part_num[None] = int(read_param(scenario_buffer['bound']['max_part_num'], 'bound_max_part_num'))
         self.max_part_num[None] = self.fluid_max_part_num[None] + self.bound_max_part_num[None]
-        self.time_count[None] = 0
-        self.time_counter[None] = 0
-        self.frame_div_iter[None] = 0
-        self.frame_incom_iter[None] = 0
-        self.ang_spd[None] = math.pi
-        self.rot_r[None] = 1.6
-        self.time_down[None] = 35.3
 
         # init phase color
         for i in range(self.phase_num[None]):
@@ -196,7 +163,6 @@ class Config:
         self.part_size[4] = math.pow(self.part_size[1], 4)
 
     def init_solver(self, config_buffer):
-        self.solver_type = read_param(config_buffer.get('solver_type'), 'solver_type')
         # DFSPH
         self.wc_gamma[None] = read_param(config_buffer.get('solver_wc_gamma'), 'solver_wc_gamma')
         self.divergence_threshold[None] = read_param(config_buffer.get('solver_divergence_threshold'), 'solver_divergence_threshold')
@@ -266,23 +232,4 @@ class Config:
         self.calculate_neighb_param(pre_config)
 
 
-# todo
-@ti.data_oriented
-class ConfigElasticity(Config):
-    def __init__(self, pre_config, config_buffer, scenario_buffer):
-        super(ConfigElasticity, self).__init__(pre_config, config_buffer, scenario_buffer)
-        self.youngs_modulus = ti.field(float, ())
-        self.poisson_ratio = ti.field(float, ())
-        self.elasticity_mu = ti.field(float, ())  # μ =E/2(1+ν) G
-        self.elasticity_lambda = ti.field(float, ())  # λ=Eν/(1+ν)(1−2ν) K = λ + 2μ/3
 
-        self.init_elasticity_parameters()
-
-    def init_elasticity_parameters(self):
-        self.youngs_modulus[None] = 2e3
-        self.poisson_ratio[None] = 0.2
-        # self.elasticity_mu[None] = self.youngs_modulus[None] / (2.0 * (1.0 + self.poisson_ratio[None]))  # μ =E/2(1+ν)
-        self.elasticity_mu[None] = 1e4
-        self.elasticity_lambda[None] = 1e4 / 3
-        # self.elasticity_lambda[None] = self.youngs_modulus[None] * self.poisson_ratio[None] / (
-        #         (1.0 + self.poisson_ratio[None]) * (1.0 - 2.0 * self.poisson_ratio[None]))  # λ=Eν/(1+ν)(1−2ν)

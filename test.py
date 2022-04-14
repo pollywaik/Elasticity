@@ -1,106 +1,117 @@
 import taichi as ti
-import numpy as np
-from scipy.spatial.transform import Rotation as Rotation
+import ti_sph as tsph
+from ti_sph.class_config import Neighb_cell
+from ti_sph.class_node import test
 import math
+from elasticity import *
 ti.init()
 
+# CONFIG
+config_capacity = ['info_space', 'info_discretization',
+                   'info_sim', 'info_gui', 'info_elasticity']
+config = tsph.Config(dim=3, capacity_list=config_capacity)
+# space
+config_space = ti.static(config.space)
+config_space.dim[None] = 3
+config_space.lb.fill(-8)
+config_space.lb[None][1] = -4
+config_space.rt.fill(8)
+# discretization
+config_discre = ti.static(config.discre)
+config_discre.part_size[None] = 0.1
+config_discre.cs[None] = 100
+config_discre.cfl_factor[None] = 0.2
+config_discre.dt[None] = tsph.fixed_dt(
+    config_discre.cs[None], config_discre.part_size[None], config_discre.cfl_factor[None])
+config_discre.kernel_h[None] = config_discre.part_size[None] * 2
+config_discre.kernel_sig3d[None] = 8 / math.pi / config_discre.kernel_h[None] ** 3
+# gui
+config_gui = ti.static(config.gui)
+config_gui.res[None] = [1920, 1080]
+config_gui.frame_rate[None] = 60
+config_gui.cam_fov[None] = 55
+config_gui.cam_pos[None] = [6.0, 1.0, 0.0]
+config_gui.cam_look[None] = [0.0, 0.0, 0.0]
+config_gui.canvas_color[None] = [0.2, 0.2, 0.6]
+config_gui.ambient_light_color[None] = [0.7, 0.7, 0.7]
+config_gui.point_light_pos[None] = [2, 1.5, -1.5]
+config_gui.point_light_color[None] = [0.8, 0.8, 0.8]
+# sim
+config_sim = ti.static(config.sim)
+config_sim.gravity[None] = [0.0, -9.8, 0.0]
+# elasticity
+config_elasticity = ti.static(config.elasticity)
+config_elasticity.youngs_modulus[None] = 25000.0
+config_elasticity.poisson_ratio[None] = 0.33
+config_elasticity.lame_mu[None] = config_elasticity.youngs_modulus[None] / (2.0 * (1.0 + config_elasticity.poisson_ratio[None]))  # μ =E/2(1+ν)
+config_elasticity.lame_lambda[None] = config_elasticity.youngs_modulus[None] * config_elasticity.poisson_ratio[None] / (
+                (1.0 + config_elasticity.poisson_ratio[None]) * (1.0 - 2.0 * config_elasticity.poisson_ratio[None]))  # λ=Eν/(1+ν)(1−2ν)
+config_elasticity.alpha[None] = 25
+# NEIGHB
+config_neighb = Neighb_cell(dim=3, struct_space=config_space,
+                          cell_size=config_discre.part_size[None] * 4, search_range=1)
 
-R0 = np.array([1, 0, 0])
-R1 = np.array([0, 1, 0])
-R2 = np.array([0, 0, 1])
+# FLUID
+fluid_capacity = ["node_basic", 'node_color',
+                  'node_implicit_sph', 'node_neighb_search']
+fluid = tsph.Node(dim=config_space.dim[None], id=0, part_num=int(1e5),
+                  neighb_cell_num=config_neighb.cell_num[None], capacity_list=fluid_capacity)
+actual_sum = fluid.push_cube(ti.Vector([-0.2, 0.4, -0.2]), ti.Vector([0.2, 0.8, 0.2]), config_discre.part_size[None], 1)
+fluid.color.vec.fill(ti.Vector([1, 1, 0]))
 
-F0 = np.array([0.078438, 0.078438, 0.078438])
-F1 = np.array([0.078438, 0.078438, 0.078438])
-F2 = np.array([0.078438, 0.078438, 0.078438])
+# BOUND
+# bound_capacity = ["node_basic", 'node_color',
+#                   'node_implicit_sph', 'node_neighb_search']
+# bound = tsph.Node(dim=config_space.dim[None], id=0, part_num=int(1e5),
+#                   neighb_cell_num=config_neighb.cell_num[None], capacity_list=bound_capacity)
+# bound.color.vec.fill(ti.Vector([0.5, 0.5, 0.5]))
+# bound.push_box(ti.Vector([-1.5, -1.5, -1.5]),
+#                ti.Vector([1.5, 1, 1.5]), config_discre.part_size[None], 1, 2)
 
-R = ti.Matrix.field(3, 3, float, 3)
-F = ti.Matrix.field(3, 3, float, 3)
-R_adv = ti.Matrix.field(3,3,float,())
-
-R_adv[None] = ti.Matrix([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
-R[0] = ti.Matrix([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
-F[0] = ti.Matrix([[0.1, 0.07, 0.07], [0.1, 0.07, 0.07], [0.1, 0.07, 0.07]])
-
-print(type(R[0]))
-@ti.func
-def matrix_cross(A, B):
-    v1 = A[1, 0]*B[2, 0]-A[2, 0]*B[1, 0] + A[1, 1]*B[2, 1]-A[2, 1]*B[1, 1] + A[1, 2]*B[2, 2]-A[2, 2]*B[1, 2]
-    v2 = A[2, 0]*B[0, 0]-A[0, 0]*B[2, 0] + A[2, 1]*B[0, 1]-A[0, 1]*B[2, 1] + A[2, 2]*B[0, 2]-A[0, 2]*B[2, 2]
-    v3 = A[0, 0]*B[1, 0]-A[1, 0]*B[0, 0] + A[0, 1]*B[1, 1]-A[1, 1]*B[0, 1] + A[0, 2]*B[1, 2]-A[1, 2]*B[0, 2]
-    return [v1, v2, v3]
-
-@ti.func
-def matrix_dot(A, B):
-    res = (A[0, 0] * B[0, 0] + A[1, 0] * B[1, 0] + A[2, 0] * B[2, 0]) + \
-          (A[0, 1] * B[0, 1] + A[1, 1] * B[1, 1] + A[2, 1] * B[2, 1]) + \
-          (A[0, 2] * B[0, 2] + A[1, 2] * B[1, 2] + A[2, 2] * B[2, 2])
-    return res
-
-@ti.func
-def rotvet_to_matrix(axis, angle, R_adv:ti.template()):
-    _cos = 1-ti.cos(angle)
-    R_adv[0, 0] = ti.cos(angle) + _cos * axis.x ** 2
-    R_adv[0, 1] = -ti.sin(angle) * axis.z + _cos * axis.x * axis.y
-    R_adv[0, 2] = ti.sin(angle) * axis.y + _cos * axis.x * axis.z
-
-    R_adv[1, 0] = ti.sin(angle) * axis.z + _cos * axis.x * axis.y
-    R_adv[1, 1] = ti.cos(angle) + _cos * axis.y ** 2
-    R_adv[1, 2] = -ti.sin(angle) * axis.x + _cos * axis.y * axis.z
-
-    R_adv[2, 0] = -ti.sin(angle) * axis.y + _cos * axis.x * axis.z
-    R_adv[2, 1] = ti.sin(angle) * axis.x + _cos * axis.y * axis.z
-    R_adv[2, 2] = ti.cos(angle) + _cos * axis.z ** 2
-
-
-
-@ti.kernel
-def extractRotation(R:ti.template(), F:ti.template(), iter:ti.template()):
-    for i in range(1):
-        omega = ti.Vector(matrix_cross(R, F)) * (1.0 / abs(matrix_dot(R, F) + 1.0e-9))
-        w = omega.norm()  # angle
-        rotvet_to_matrix(omega/w, w, R_adv[None])
-
-        # # if w < 1.0e-9:
-        # #     break
-
-        # r = Rotation.from_rotvec(omega)
-        # R_adv.from_numpy(r.as_matrix())
-        res = R @ R_adv[None]
-        print(res)
-        R = res
-
-        print(R)
-
-        # R = R_adv[None] @ R
-# print(np.array(matrix_cross(R[0], F[0])))
-extractRotation(R[0],F[0],10)
-
-# [[ 0.98441565 -0.12434998 -0.12434998]
-#  [ 0.12434998  0.99220783 -0.00779218]
-#  [ 0.12434998 -0.00779218  0.99220783]]
+# Elastomer
+elastomer_capacity = ["node_basic", 'node_color', 'node_implicit_sph', 'node_neighb_search',
+                      'node_elasticity', 'node_elasticity_neighbor', 'node_conjugate_gradient']
+elastomer = tsph.Node(dim=config_space.dim[None], id=0, part_num=int(1e5),
+                  neighb_cell_num=config_neighb.cell_num[None], capacity_list=elastomer_capacity)
+elastomer.push_cube(ti.Vector([-1, -0.1, -1]), ti.Vector([1., 0., 1.]), config_discre.part_size[None], 1)
+# elastomer.push_cube(ti.Vector([-0.2, -0.2, -0.2]), ti.Vector([0., 0., 0.]), config_discre.part_size[None], 1)
+# elastomer.push_box(ti.Vector([-0.5, -0.5, -0.5]), ti.Vector([0., 0., 0.]), config_discre.part_size[None], 1, 2)
+elastomer.color.vec.fill(ti.Vector([0.5, 0.5, 0.5]))
+elastomer.neighb_search(config_neighb, config_space)
 
 
-# [[-0.333333, 0.666667, 0.666666], [0.666667, -0.333333, 0.666667], [0.666667, 0.666667, -0.333333]]
-for i in range(1):
-    omega = (np.cross(R0, F0) + np.cross(R1, F1) + np.cross(R2, F2)) *\
-            (1.0 / abs(np.dot(R0, F0) + np.dot(R1, F1) + np.dot(R2, F2) + 1.0e-9))
-    w = np.linalg.norm(omega)
-    if w < 1.0e-9:
-        break
-    print(np.cross(R0, F0))
-    print(np.cross(R1, F1))
-    print(np.cross(R2, F2))
-    r = R.from_rotvec(omega)
-    r.as_quat()
-    print(r.as_quat())
 
-# import pysplishsplash as sph
-#
-# def main():
-#     base = sph.Exec.SimulatorBase()
-#     base.init(useGui=False)
-#     base.setValueFloat(base.STOP_AT, 10.0) # Important to have the dot to denote a float
-#     base.run()
-#
-# if __name__ == "__main__":
-#     main()
+for i in range(elastomer.info.stack_top[None]):
+    elastomer.implicit_sph.acce_adv[i] = [0, -9.8, 0]
+    elastomer.basic.rest_density[i] = 100.0
+    elastomer.basic.mass[i] = elastomer.basic.rest_density[i] * elastomer.basic.rest_volume[i]
+
+init_elasticity_values(elastomer)
+elastomer.neighb_search(config_neighb, config_space)
+init_neighbors(elastomer, elastomer, config_discre, config_neighb)
+init_L(elastomer, elastomer, config_discre, config_space)
+
+# print(elastomer.basic.pos)
+# elasticity_step(elastomer, config_discre, config_sim, config_elasticity)
+
+# GUI
+gui = tsph.Gui(config.gui)
+gui.env_set_up()
+while gui.window.running:
+    if gui.op_system_run == True:
+        # run_elasticity_step(fluid, elastomer, config_discre, config_sim, config_elasticity, config_neighb, config_space)
+        pass
+    gui.monitor_listen()
+    if gui.op_refresh_window:
+        gui.scene_setup()
+        gui.scene_add_parts(fluid, length=config_discre.part_size[None])
+        gui.scene_add_parts(elastomer, length=config_discre.part_size[None])
+        # gui.scene_add_parts(bound, length=config_discre.part_size[None])
+        gui.scene_render()
+
+
+# print(config.space)
+# print(config.discre)
+# print(config.neighb)
+# print(config.sim)
+
