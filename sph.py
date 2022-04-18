@@ -27,19 +27,19 @@ def SPH_clean_value(obj: ti.template(), config: ti.template()):
     phase_num = ti.static(config.phase_rest_density.n)
     dim = ti.static(config.gravity.n)
     for i in range(obj.part_num[None]):
-        obj.W[i] = 0
-        obj.sph_compression[i] = 0
-        obj.sph_density[i] = 0
-        obj.alpha_2[i] = 0
+        obj.W[i] = 0.0
+        obj.sph_compression[i] = 0.0
+        obj.sph_density[i] = 0.0
+        obj.alpha_2[i] = 0.0
         obj.flag[i] = 0
         for j in ti.static(range(dim)):
-            obj.W_grad[i][j] = 0
-            obj.acce[i][j] = 0
-            obj.acce_adv[i][j] = 0
-            obj.alpha_1[i][j] = 0
-            obj.pressure_force[i][j] = 0
+            obj.W_grad[i][j] = 0.0
+            obj.acce[i][j] = 0.0
+            obj.acce_adv[i][j] = 0.0
+            obj.alpha_1[i][j] = 0.0
+            obj.pressure_force[i][j] = 0.0
             for k in ti.static(range(phase_num)):
-                obj.drift_vel[i, k][j] = 0
+                obj.drift_vel[i, k][j] = 0.0
 
 
 @ti.kernel

@@ -546,7 +546,7 @@ class Gui():
 class Elasticity(Fluid):
     def __init__(self, max_part_num, pre_config, config):
         super(Elasticity, self).__init__(max_part_num, pre_config, config)
-        self.pos0 = ti.Vector.field(config.dim[None], int)  # particle initial position
+        self.pos0 = ti.Vector.field(config.dim[None], float)  # particle initial position
 
         self.neighbors_initial = ti.field(int)  # neighbors_initial[i,j] -- initial neighbor particle
         self.neighbors_num = ti.field(int)  # neighbor particle counter
@@ -557,8 +557,11 @@ class Elasticity(Fluid):
 
         # solver rhs
         self.F = ti.Matrix.field(3, 3, float)  # deformation gradient
-        self.strain = ti.Vector.field(6, float, ())  # temp
-        self.stress = ti.Vector.field(6, float)
+
+        # self.stress = ti.Vector.field(6, float)
+        # self.strain = ti.Vector.field(6, float, ())  # temp
+        self.strain = ti.Matrix.field(3, 3, float)
+        self.stress = ti.Matrix.field(3, 3, float)
         self.elastic_force = ti.Vector.field(3, float)
 
         # matrix free conjugate gradient method
@@ -566,12 +569,12 @@ class Elasticity(Fluid):
         self.r = ti.Vector.field(3, float)  # residual r0 = b
         self.p = ti.Vector.field(3, float)  # p0 = r0
         self.grad_u = ti.Matrix.field(3, 3, float)  # gradient of the displacement field
-        self.stress_adv = ti.Vector.field(6, float)
+        self.stress_adv = ti.Matrix.field(3, 3, float)
         self.elastic_force_adv = ti.Vector.field(3, float)  # next time step, temp force
         self.Ap = ti.Vector.field(3, float)
 
         # put for-each-particle attributes in this list to register them!
-        self.elas_attr_list = [self.pos0, self.neighbors_num, self.L, self.R, self.RL, self.F, self.stress,
+        self.elas_attr_list = [self.pos0, self.neighbors_num, self.L, self.R, self.RL, self.F, self.strain, self.stress,
                                self.elastic_force, self.b, self.r, self.p, self.grad_u, self.stress_adv,
                                self.elastic_force_adv, self.Ap]
 

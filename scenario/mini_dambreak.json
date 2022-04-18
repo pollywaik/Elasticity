@@ -1,6 +1,6 @@
 {
     "sim_env":{
-        "global_part_size":0.05,
+        "global_part_size":0.1,
         "global_dynamic_viscosity":1e-2,
         "global_artificial_viscosity":0.5,
         "sim_dim": 3,
@@ -8,7 +8,7 @@
         "sim_space_rt": [8, 8, 8],
         "gravity": [0, -9.8, 0],
         "phase_num": 3,
-        "phase_rest_density": [100,200,300],
+        "phase_rest_density": [1000.0,200,300],
         "phase_color_hex": ["0x6F7DBC","0xFA8012","0xFA8072"]
     },
     "fluid":{
@@ -17,9 +17,9 @@
             {
                 "type":"cube",
                 "vel": [0, 0, 0],
-                "particle_relaxing_factor":1.001,
-                "start_pos":[-0.2, -0.2, -0.2],
-                "end_pos":[0.2, 0.2, 0.2],
+                "particle_relaxing_factor":1.00,
+                "start_pos":[-0.5, -0.5, -0.5],
+                "end_pos":[0.0, 0.0, 0.0],
                 "volume_frac":[1,0,0],
                 "color":"0x6F7DBC"
             }
@@ -31,8 +31,8 @@
             {
                 "type":"box",
                 "vel": [0, 0, 0],
-                "particle_relaxing_factor":1.001,
-                "start_pos":[-0.5,-0.5, -0.5],
+                "particle_relaxing_factor":1.00,
+                "start_pos":[-1.0,-1.0, -1.0],
                 "end_pos":[0.5, 0.5, 0.5],
                 "layers":2,
                 "volume_frac":[1,0,0],

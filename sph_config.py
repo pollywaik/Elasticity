@@ -232,8 +232,8 @@ class Config:
         self.kernel_h[2] = math.pow(self.kernel_h[1], 2)
         self.kernel_h[3] = math.pow(self.kernel_h[1], 3)
         self.kernel_h[4] = math.pow(self.kernel_h[1], 4)
-        self.kernel_sig[3] = 8 / math.pi / self.kernel_h[1] ** 3
-        self.kernel_sig[2] = 40 / 7 / math.pi / self.kernel_h[1] ** 2
+        self.kernel_sig[3] = 8.0 / math.pi / self.kernel_h[1] ** 3
+        self.kernel_sig[2] = 40.0 / 7.0 / math.pi / self.kernel_h[1] ** 2
 
     @ti.kernel
     def init_neighb_param(self):
@@ -279,10 +279,10 @@ class ConfigElasticity(Config):
         self.init_elasticity_parameters()
 
     def init_elasticity_parameters(self):
-        self.youngs_modulus[None] = 2e3
-        self.poisson_ratio[None] = 0.2
-        # self.elasticity_mu[None] = self.youngs_modulus[None] / (2.0 * (1.0 + self.poisson_ratio[None]))  # μ =E/2(1+ν)
-        self.elasticity_mu[None] = 1e4
-        self.elasticity_lambda[None] = 1e4 / 3
-        # self.elasticity_lambda[None] = self.youngs_modulus[None] * self.poisson_ratio[None] / (
-        #         (1.0 + self.poisson_ratio[None]) * (1.0 - 2.0 * self.poisson_ratio[None]))  # λ=Eν/(1+ν)(1−2ν)
+        self.youngs_modulus[None] = 250000.0
+        self.poisson_ratio[None] = 0.33
+        self.elasticity_mu[None] = self.youngs_modulus[None] / (2.0 * (1.0 + self.poisson_ratio[None]))  # μ =E/2(1+ν)
+        # self.elasticity_mu[None] = 1e4
+        # self.elasticity_lambda[None] = 1e4 / 3
+        self.elasticity_lambda[None] = self.youngs_modulus[None] * self.poisson_ratio[None] / (
+                (1.0 + self.poisson_ratio[None]) * (1.0 - 2.0 * self.poisson_ratio[None]))  # λ=Eν/(1+ν)(1−2ν)

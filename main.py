@@ -31,6 +31,12 @@ init_scenario(fluid, bound, scenario, config)
 init_elasticity_scenario(ngrid, fluid, bound, config)  # todo
 print('Done pushing particles')
 
+# for i in range(fluid.part_num[None]):
+#     fluid.pos[i][2] *= 1.2
+#     print(fluid.L[1])
+
+# sph_elasticity_step(ngrid, fluid, bound, config)
+
 gui = Gui(config)
 gui.env_set_up()
 print('Done gui setting')
@@ -39,10 +45,12 @@ config.start_id[None], config.end_id[None] = bound.get_part_range_from_name('rod
 config.vel_down_np = np.array([0.0,-3.0,0.0])
 config.vel_rot_np = np.zeros(3)
 
+
 while gui.window.running:
     if gui.op_system_run == True:
         run_elasticity_step(ngrid, fluid, bound, config)
         refresh_scenario(scenario, config)
+        pass
     gui.monitor_listen()
     if gui.op_refresh_window:
         gui.scene_setup()

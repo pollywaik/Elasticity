@@ -4,8 +4,8 @@ from scipy.spatial.transform import Rotation as Rotation
 
 @ti.kernel
 def init_values(obj: ti.template()):
-    obj.init_pos0()
     for i in range(obj.part_num[None]):
+        obj.pos0[i] = obj.pos[i]
         obj.R[i] = ti.Matrix.identity(float, 3)
 
 
@@ -21,14 +21,12 @@ def init_neighbors(ngrid: ti.template(), obj: ti.template(), nobj: ti.template()
                     if neighb_uid == nobj.uid:
                         neighb_pid = ngrid.part_pid_in_node[shift]
 
-                        xij0 = obj.pos0[i] - nobj.pos0[neighb_pid]
-                        r = xij0.norm()
+                        xij = obj.pos[i] - nobj.pos[neighb_pid]
+                        r = xij.norm()
                         if 0 < r < config.kernel_h[1]:
                             obj.neighbors_initial[i, obj.neighbors_num[i]] = neighb_pid
-                            # print("npid", i, obj.neighbors_num[i], neighb_pid, obj.neighbors_initial[i, obj.neighbors_num[i]])
                             obj.neighbors_num[i] += 1
-    # for i in range(obj.neighbors_num[1]):
-    #     print(obj.neighbors_initial[1, i])
+
 
 
 ################################################# tool ############################################
@@ -50,18 +48,18 @@ def matrix_dot(A, B):
 
 @ti.func
 def rotvet_to_matrix(axis, angle, R_adv):
-    _cos = 1-ti.cos(angle)
-    R_adv[0, 0] = ti.cos(angle) + _cos * axis.x ** 2
+    _cos = 1.0-ti.cos(angle)
+    R_adv[0, 0] = ti.cos(angle) + _cos * axis.x ** 2.0
     R_adv[0, 1] = -ti.sin(angle) * axis.z + _cos * axis.x * axis.y
     R_adv[0, 2] = ti.sin(angle) * axis.y + _cos * axis.x * axis.z
 
     R_adv[1, 0] = ti.sin(angle) * axis.z + _cos * axis.x * axis.y
-    R_adv[1, 1] = ti.cos(angle) + _cos * axis.y ** 2
+    R_adv[1, 1] = ti.cos(angle) + _cos * axis.y ** 2.0
     R_adv[1, 2] = -ti.sin(angle) * axis.x + _cos * axis.y * axis.z
 
     R_adv[2, 0] = -ti.sin(angle) * axis.y + _cos * axis.x * axis.z
     R_adv[2, 1] = ti.sin(angle) * axis.x + _cos * axis.y * axis.z
-    R_adv[2, 2] = ti.cos(angle) + _cos * axis.z ** 2
+    R_adv[2, 2] = ti.cos(angle) + _cos * axis.z ** 2.0
 
     return R_adv
 
@@ -84,49 +82,38 @@ def elasticity_cfl_condition(obj: ti.template(), config: ti.template()):
 
 @ti.kernel
 def elasticity_clean_value(obj: ti.template(), config: ti.template()):
-    dim = ti.static(config.gravity.n)
     for i in range(obj.part_num[None]):
-        for j in ti.static(range(dim)):
-            obj.elastic_force[i][j] = 0
-            obj.elastic_force_adv[i][j] = 0
-            obj.r[i][j] = 0
-            obj.p[i][j] = 0
-            obj.Ap[i][j] = 0
+        obj.R[i] = ti.Matrix.identity(float, 3)
+        obj.RL[i] = ti.Matrix.zero(float, 3, 3)
+        obj.F[i] = ti.Matrix.zero(float, 3, 3)
+        obj.strain[i] = ti.Matrix.zero(float, 3, 3)
+        obj.stress[i] = ti.Matrix.zero(float, 3, 3)
 
-        for j in ti.static(range(6)):
-            obj.stress[i][j] = 0
-            obj.stress_adv[i][j] = 0
+        obj.elastic_force[i] = [0.0, 0.0, 0.0]
 
-        for x in ti.static(range(dim)):
-            for y in ti.static(range(dim)):
-                obj.F[i][x, y] = 0
-                obj.grad_u[i][x, y] = 0
+        obj.grad_u[i] = ti.Matrix.zero(float, 3, 3)
+        obj.stress_adv[i] = ti.Matrix.zero(float, 3, 3)
+        obj.elastic_force_adv[i] = [0.0, 0.0, 0.0]
 
-        # print("clear", obj.F[i],obj.grad_u[i],obj.elastic_force[i],obj.stress[i],obj.R[i])
-        # obj.grad_u[i] = ti.Matrix.zero(float, 3, 3)
-        # obj.F[i] = ti.Matrix.zero(float, 3, 3)
-
-    for j in ti.static(range(6)):
-        obj.strain[None][j] = 0
+        obj.r[i] = [0.0, 0.0, 0.0]
+        obj.p[i] = [0.0, 0.0, 0.0]
+        obj.Ap[i] = [0.0, 0.0, 0.0]
 
 ################################################# func ############################################
 @ti.kernel
 def elasticity_compute_L(obj: ti.template(), nobj: ti.template(), config: ti.template()):  # L W -- united
     for i in range(obj.part_num[None]):
+        print(obj.neighbors_num[i])
         for n in range(obj.neighbors_num[i]):
             j = obj.neighbors_initial[i, n]
-            # ti.static_print(n.dtype)
-            xij_0 = obj.pos0[i] - nobj.pos0[j]
-            r = xij_0.norm()
-            xji_0 = -xij_0
-            obj.L[i] += nobj.rest_volume[j] * (W_grad(r, config) * xij_0 / r) @ xji_0.transpose()  # Matrix W,  (xij_0 / r)--A unit vector
-            # if i == 1:
-            #     print(obj.neighbors_num[i], j)
-            #     print(xij_0, xji_0, r)
-            #     print(nobj.rest_volume[j], W_grad(r, config), (W_grad(r, config) * xij_0 / r), obj.L[i])
-        # add 1 to z - component. otherwise we get a singular matrix in 2D
-        if config.dim[None] == 2:
-            obj.L[i][2, 2] = 1.0
+            xij0 = obj.pos0[i] - nobj.pos0[j]
+            r0 = xij0.norm()
+            grad_W0 = W_grad(r0, config) * xij0 / r0
+            obj.L[i] -= nobj.rest_volume[j] * grad_W0 @ xij0.transpose()
+
+        # # add 1 to z - component. otherwise we get a singular matrix in 2D
+        # if config.dim[None] == 2:
+        #     obj.L[i][2, 2] = 1.0
 
         if obj.L[i].determinant() != 0:  # invertible
             obj.L[i] = obj.L[i].inverse()
@@ -147,82 +134,82 @@ def extract_rotation(R:ti.template(), F, iter):
 @ti.kernel
 def elasticity_compute_rotations(obj: ti.template(), nobj: ti.template(), config: ti.template()):  # R RL -- united
     for i in range(obj.part_num[None]):
-        F = ti.Matrix.zero(float, 3, 3)
-        R_adv = ti.Matrix.identity(float, 3)
+        temp_F = ti.Matrix.zero(float, 3, 3)
+
+        # print(obj.neighbors_num[i])
         for n in range(obj.neighbors_num[i]):
-        # for n in ti.static(range(obj.neighbors_num[i])):
             j = obj.neighbors_initial[i, n]
-            xij_0 = obj.pos0[i] - nobj.pos0[j]
-            r = xij_0.norm()
-            LW = obj.L[i] @ (W_grad(r, config) * xij_0 / r)
+            xij0 = obj.pos0[i] - nobj.pos0[j]
+            r0 = xij0.norm()
+            grad_W0 = W_grad(r0, config) * xij0 / r0
+            LW0 = obj.L[i] @ grad_W0
+
             xji = nobj.pos[j] - obj.pos[i]
-            F += nobj.rest_volume[j] * xji @ LW.transpose()
+            temp_F += nobj.rest_volume[j] * xji @ LW0.transpose()
 
-        if config.dim[None] == 2:
-            F[2, 2] = 1.0
+            # print("ddd")
+            # print(xij0, nobj.rest_volume[j], grad_W0, LW0, xji, temp_F)
 
-        # extract_rotation(R_adv, F, 10)  # todo
-        # obj.R[i] = R_adv
-        # obj.RL[i] = obj.R[i] @ obj.L[i]
-
-        U, sig, V = ti.svd(F)
+        U, sig, V = ti.svd(temp_F)
         obj.R[i] = U @ V.transpose()
         obj.RL[i] = obj.R[i] @ obj.L[i]
-        if i == 0:
-            print(obj.R[i], obj.RL[i])
+        # print(" ",temp_F, obj.R[i], obj.RL[i])
+
+
 
 ################################################# solve rhs ############################################
 @ti.kernel
 def elasticity_compute_stress(obj: ti.template(), nobj: ti.template(), config: ti.template()):  # F(xt, x0)  strain(xt, x0) stress(xt, x0)
     for i in range(obj.part_num[None]):
-        # for n in ti.static(range(obj.neighbors_num[i])):
         for n in range(obj.neighbors_num[i]):
             j = obj.neighbors_initial[i, n]
-            xij_0 = obj.pos0[i] - nobj.pos0[j]
-            r = xij_0.norm()
-            RLW = obj.RL[i] @ (W_grad(r, config) * xij_0 / r)
+            xij0 = obj.pos0[i] - nobj.pos0[j]
+            r0 = xij0.norm()
+            grad_W0 = W_grad(r0, config) * xij0 / r0
+            RLW0 = obj.RL[i] @ grad_W0
 
             xji = nobj.pos[j] - obj.pos[i]
-            # obj.F[i] += nobj.rest_volume[j] * (xji - obj.R[i] @ xji_0) @ RLW.transpose() # Matrix W_grad(r)
-            obj.F[i] += nobj.rest_volume[j] * xji @ RLW.transpose()  # Matrix W_grad(r) simplify todo
+            obj.F[i] += nobj.rest_volume[j] * xji @ RLW0.transpose()
 
-        # obj.F[i] += ti.Matrix.identity(float, 3)
-        if config.dim[None] == 2:
-            obj.F[i][2, 2] = 1.0
+        obj.strain[i] = 0.5 * (obj.F[i] + obj.F[i].transpose()) - ti.Matrix.identity(float, 3)
+        obj.stress[i] = 2.0 * config.elasticity_mu[None] * obj.strain[i] + config.elasticity_lambda[None] * obj.strain[i].trace() * ti.Matrix.identity(float, 3)
 
-        # ε = (F+FT)/2 -I symmetric
-        obj.strain[None][0] = obj.F[i][0, 0] - 1.0
-        obj.strain[None][1] = obj.F[i][1, 1] - 1.0
-        obj.strain[None][2] = obj.F[i][2, 2] - 1.0
-        obj.strain[None][3] = 0.5 * (obj.F[i][0, 1] + obj.F[i][1, 0])
-        obj.strain[None][4] = 0.5 * (obj.F[i][0, 2] + obj.F[i][2, 0])
-        obj.strain[None][5] = 0.5 * (obj.F[i][1, 2] + obj.F[i][2, 1])
-
-        # P = 2μ*strain + (K-2μ/3)*trace(strain)*I
-        # K = λ+2μ/3
-        obj.stress[i] = obj.strain[None] * 2.0 * config.elasticity_mu[None]
-        ltrace = config.elasticity_lambda[None]*(obj.strain[None][0] + obj.strain[None][1] + obj.strain[None][2])
-        obj.stress[i][0] += ltrace
-        obj.stress[i][1] += ltrace
-        obj.stress[i][2] += ltrace
-        if i == 0:
-            print("F stress", obj.F[i], obj.stress[i])
+        # print("stress",obj.strain[i], obj.stress[i])
+        # # ε = (F+FT)/2 -I symmetric
+        # obj.strain[None][0] = obj.F[i][0, 0] - 1.0
+        # obj.strain[None][1] = obj.F[i][1, 1] - 1.0
+        # obj.strain[None][2] = obj.F[i][2, 2] - 1.0
+        # obj.strain[None][3] = 0.5 * (obj.F[i][0, 1] + obj.F[i][1, 0])
+        # obj.strain[None][4] = 0.5 * (obj.F[i][0, 2] + obj.F[i][2, 0])
+        # obj.strain[None][5] = 0.5 * (obj.F[i][1, 2] + obj.F[i][2, 1])
+        #
+        # # P = 2μ*strain + (K-2μ/3)*trace(strain)*I
+        # # K = λ+2μ/3
+        # obj.stress[i] = obj.strain[None] * 2.0 * config.elasticity_mu[None]
+        # ltrace = config.elasticity_lambda[None]*(obj.strain[None][0] + obj.strain[None][1] + obj.strain[None][2])
+        # obj.stress[i][0] += ltrace
+        # obj.stress[i][1] += ltrace
+        # obj.stress[i][2] += ltrace
+        # if i == 0:
+        #     print("F stress", obj.F[i], obj.stress[i])
 
 @ti.kernel
 def elasticity_compute_force(obj: ti.template(), nobj: ti.template(), config: ti.template()):  # f(xt, x0)
     for i in range(obj.part_num[None]):
-        # for n in ti.static(range(obj.neighbors_num[i])):
         for n in range(obj.neighbors_num[i]):
             j = obj.neighbors_initial[i, n]
-            xij_0 = obj.pos0[i] - nobj.pos0[j]
-            r = xij_0.norm()
-            RLWi = obj.RL[i] @ (W_grad(r, config) * xij_0 / r)
-            RLWj = -nobj.RL[j] @ (W_grad(r, config) * xij_0 / r)
+            # obj.elastic_force[i] += obj.rest_volume[i] * nobj.rest_volume[j] * (
+            #         ti.Vector(multi_6v_with_3v(obj.stress[i], RLWi)) - ti.Vector(multi_6v_with_3v(nobj.stress[j], RLWj)))
 
-            obj.elastic_force[i] += obj.rest_volume[i] * nobj.rest_volume[j] * (
-                    ti.Vector(multi_6v_with_3v(obj.stress[i], RLWi)) - ti.Vector(multi_6v_with_3v(nobj.stress[j], RLWj)))
-        if i == 0:
-            print("elastic_force", obj.elastic_force[i])
+            xij0 = obj.pos0[i] - nobj.pos0[j]
+            r0 = xij0.norm()
+            grad_W0_i = W_grad(r0, config) * xij0 / r0
+            grad_W0_j = -W_grad(r0, config) * xij0 / r0
+            RLW0_i = obj.RL[i] @ grad_W0_i
+            RLW0_j = nobj.RL[j] @ grad_W0_j
+            obj.elastic_force[i] += obj.rest_volume[i] * nobj.rest_volume[j] * (obj.stress[i] @ RLW0_i - nobj.stress[j] @ RLW0_j)
+
+        # print("elastic_force", obj.elastic_force[i])
 
 
 @ti.kernel
@@ -238,7 +225,7 @@ def elasticity_iter_init(i: ti.template(), obj: ti.template()):
     # for i in range(obj.part_num[None]):
     obj.r[i] = obj.b[i]  # r0 = b - Ax0
     obj.p[i] = obj.r[i]  # p0 = r0
-    obj.vel_adv[i] = ti.Vector([0, 0, 0])
+    obj.vel_adv[i] = ti.Vector([0.0, 0.0, 0.0])
     if i == 0:
         print("r p", obj.r[i], obj.p[i])
 
@@ -297,7 +284,7 @@ def elasticity_iter_Ap(i: ti.template(), obj: ti.template(), nobj: ti.template()
     elasticity_iter_stress(i, obj, nobj, config)
     elasticity_iter_force_adv(i, obj, nobj, config)
     # for i in range(obj.part_num[None]):
-    obj.Ap[i] = obj.p[i] - (1 / obj.mass[i]) * config.dt[None] * obj.elastic_force_adv[i]
+    obj.Ap[i] = obj.p[i] - (1.0 / obj.mass[i]) * config.dt[None] * obj.elastic_force_adv[i]
 
 
     if i == 0:
@@ -346,7 +333,10 @@ def SPH_advection_elasticity_acc(obj: ti.template(), config: ti.template()):
         if i == 0:
             print("dt va v acc", config.dt[None], obj.vel_adv[i], obj.vel[i], obj.acce_adv[i])
 
-
+@ti.kernel
+def elasticity_acc(obj: ti.template(), config: ti.template()):
+    for i in range(obj.part_num[None]):
+        obj.acce_adv[i] += obj.elastic_force[i] / obj.mass[i]
 
 def init_elasticity_value(ngrid, fluid, bound, config):
     # initial pos0 and R
@@ -369,10 +359,10 @@ def elasticity_step(fluid, config):
     elasticity_compute_rotations(fluid, fluid, config)
     elasticity_compute_stress(fluid, fluid, config)
     elasticity_compute_force(fluid, fluid, config)
-    elasticity_compute_rhs(fluid, config)  # compute right hand side vector b
-    elasticity_iter_vel_adv(fluid, fluid, config)  # cg
+    # elasticity_compute_rhs(fluid, config)  # compute right hand side vector b
+    # elasticity_iter_vel_adv(fluid, fluid, config)  # cg
 
-    SPH_advection_elasticity_acc(fluid, config)
+    elasticity_acc(fluid, config)
     # SPH_advection_elasticity_acc(bound)
 
 
@@ -387,8 +377,8 @@ def sph_elasticity_step(ngrid, fluid, bound, config):
     ngrid.fill_node(bound, config)
     """ SPH clean value """
     SPH_clean_value(fluid, config)
-    SPH_clean_value(bound, config)
     elasticity_clean_value(fluid, config)  # todo
+
     """ SPH compute W and W_grad """
     SPH_prepare_attr(ngrid, fluid, fluid, config)
     SPH_prepare_attr(ngrid, fluid, bound, config)
@@ -400,37 +390,34 @@ def sph_elasticity_step(ngrid, fluid, bound, config):
     SPH_prepare_alpha_2(ngrid, bound, fluid, config)
     SPH_prepare_alpha(fluid)
     SPH_prepare_alpha(bound)
+
     """ IPPE SPH divergence """
-    config.div_iter_count[None] = 0
-    SPH_vel_2_vel_adv(fluid)
-    config.is_compressible[None] = 1
-    while config.div_iter_count[None] < config.iter_threshold_min[None] or config.is_compressible[None] == 1:
-        IPPE_adv_psi_init(fluid)
-        # IPPE_adv_psi_init(bound)
-        IPPE_adv_psi(ngrid, fluid, fluid, config)
-        IPPE_adv_psi(ngrid, fluid, bound, config)
-        # IPPE_adv_psi(ngrid, bound, fluid)
-        IPPE_psi_adv_non_negative(fluid)
-        # IPPE_psi_adv_non_negative(bound)
-        IPPE_psi_adv_is_compressible(fluid, config)
-        IPPE_update_vel_adv(ngrid, fluid, fluid, config)
-        IPPE_update_vel_adv(ngrid, fluid, bound, config)
-        config.div_iter_count[None] += 1
-        if config.div_iter_count[None] > config.iter_threshold_max[None]:
-            break
-    SPH_vel_adv_2_vel(fluid)
+    # config.div_iter_count[None] = 0
+    # SPH_vel_2_vel_adv(fluid)
+    # config.is_compressible[None] = 1
+    # while config.div_iter_count[None] < config.iter_threshold_min[None] or config.is_compressible[None] == 1:
+    #     IPPE_adv_psi_init(fluid)
+    #     # IPPE_adv_psi_init(bound)
+    #     IPPE_adv_psi(ngrid, fluid, fluid, config)
+    #     IPPE_adv_psi(ngrid, fluid, bound, config)
+    #     # IPPE_adv_psi(ngrid, bound, fluid)
+    #     IPPE_psi_adv_non_negative(fluid)
+    #     # IPPE_psi_adv_non_negative(bound)
+    #     IPPE_psi_adv_is_compressible(fluid, config)
+    #     IPPE_update_vel_adv(ngrid, fluid, fluid, config)
+    #     IPPE_update_vel_adv(ngrid, fluid, bound, config)
+    #     config.div_iter_count[None] += 1
+    #     if config.div_iter_count[None] > config.iter_threshold_max[None]:
+    #         break
+    # SPH_vel_adv_2_vel(fluid)
+
     """ SPH advection """
     SPH_advection_gravity_acc(fluid, config)
     SPH_advection_viscosity_acc(ngrid, fluid, fluid, config)
-    # SPH_advection_viscosity_acc(ngrid, fluid, bound, config)
-    # SPH_advection_surface_tension_acc(ngrid, fluid, fluid, config)
-
-    # todo elasticity_step
-
     elasticity_step(fluid, config)
     # elasticity_cfl_condition(fluid, config)
-
     SPH_advection_update_vel_adv(fluid, config)
+
     """ IPPE SPH pressure """
     config.incom_iter_count[None] = 0
     while config.incom_iter_count[None] < config.iter_threshold_min[None] or config.is_compressible[None] == 1:
@@ -447,46 +434,26 @@ def sph_elasticity_step(ngrid, fluid, bound, config):
         config.incom_iter_count[None] += 1
         if config.incom_iter_count[None] > config.iter_threshold_max[None]:
             break
-    """ debug info """
-    # print('iter div: ', div_iter_count)
-    # print('incom div: ', incom_iter_count)
-    """ WC SPH pressure """
-    # WC_pressure_val(fluid)
-    # WC_pressure_acce(ngrid, fluid, fluid)
-    # WC_pressure_acce(ngrid, fluid, bound)
-    # SPH_advection_update_vel_adv(fluid)
-    """ FBM procedure """
-    # while fluid.general_flag[None] > 0:
-    #     SPH_FBM_clean_tmp(fluid, config)
-    #     SPH_FBM_convect(ngrid, fluid, fluid, config)
-    #     SPH_FBM_diffuse(ngrid, fluid, fluid, config)
-    #     SPH_FBM_check_tmp(fluid)
-    """ SPH update """
-    SPH_update_volume_frac(fluid)
-    SPH_update_mass(fluid, config)
+
     SPH_update_pos(fluid, config)
-    SPH_update_color(fluid, config)
-    # SPH_update_energy(fluid, config)
-    # map_velocity(ngrid, grid, fluid)
-    return config.div_iter_count[None], config.incom_iter_count[None]
-    """ SPH debug """
+
 
 
 def run_elasticity_step(ngrid, fluid, bound, config):
     config.time_counter[None] += 1
 
-    while config.time_count[None] < config.time_counter[None] / config.gui_fps[None]:
-        """ computation loop """
-        config.time_count[None] += config.dt[None]
-        if config.solver_type == "DFSPH" or config.solver_type == "VFSPH":
-            sph_elasticity_step(ngrid, fluid, bound, config)
-        elif config.solver_type == "JL21":
-            sph_step_jl21(ngrid, fluid, bound, config)
-        else:
-            raise Exception('sph ERROR: no solver type', config.solver_type)
-        apply_bound_transform(bound, config)
-        config.frame_div_iter[None] += config.div_iter_count[None]
-        config.frame_incom_iter[None] += config.incom_iter_count[None]
+    # while config.time_count[None] < config.time_counter[None] / config.gui_fps[None]:
+    """ computation loop """
+    config.time_count[None] += config.dt[None]
+    if config.solver_type == "DFSPH" or config.solver_type == "VFSPH":
+        sph_elasticity_step(ngrid, fluid, bound, config)
+    elif config.solver_type == "JL21":
+        sph_step_jl21(ngrid, fluid, bound, config)
+    else:
+        raise Exception('sph ERROR: no solver type', config.solver_type)
+    apply_bound_transform(bound, config)
+    config.frame_div_iter[None] += config.div_iter_count[None]
+    config.frame_incom_iter[None] += config.incom_iter_count[None]
 
 
 
