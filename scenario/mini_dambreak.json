@@ -8,7 +8,7 @@
         "sim_space_rt": [8, 8, 8],
         "gravity": [0, -9.8, 0],
         "phase_num": 3,
-        "phase_rest_density": [1000.0,200,300],
+        "phase_rest_density": [100.0,200,300],
         "phase_color_hex": ["0x6F7DBC","0xFA8012","0xFA8072"]
     },
     "fluid":{
@@ -18,10 +18,23 @@
                 "type":"cube",
                 "vel": [0, 0, 0],
                 "particle_relaxing_factor":1.00,
-                "start_pos":[-0.5, -0.5, -0.5],
-                "end_pos":[0.0, 0.0, 0.0],
+                "start_pos":[-0.5, -1.0, -0.5],
+                "end_pos":[0.5, -0.5, 0.5],
                 "volume_frac":[1,0,0],
-                "color":"0x6F7DBC"
+                "color":"0x6F7DBC",
+                "G": 0,
+                "K": 0
+            },
+            {
+                "type":"cube",
+                "vel": [0, 0, 0],
+                "particle_relaxing_factor":1.00,
+                "start_pos":[-0.5, -0.2, -0.2],
+                "end_pos":[0.0, 0.3, 0.3],
+                "volume_frac":[0,1,0],
+                "color":"0x6F7DBC",
+                "G": 5e4,
+                "K": 5e4
             }
         ]
     },
@@ -32,11 +45,13 @@
                 "type":"box",
                 "vel": [0, 0, 0],
                 "particle_relaxing_factor":1.00,
-                "start_pos":[-1.0,-1.0, -1.0],
-                "end_pos":[0.5, 0.5, 0.5],
+                "start_pos":[-1.0,-1.5, -1.0],
+                "end_pos":[1, 1.0, 1],
                 "layers":2,
-                "volume_frac":[1,0,0],
-                "color":"0xFA8072"
+                "volume_frac":[0,0,1],
+                "color":"0xFA8072",
+                "G": 0,
+                "K": 0
             }
         ]
     }

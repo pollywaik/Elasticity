@@ -101,7 +101,7 @@ def elasticity_clean_value(obj: ti.template(), config: ti.template()):
 
 ################################################# func ############################################
 @ti.kernel
-def elasticity_compute_L(obj: ti.template(), nobj: ti.template(), config: ti.template()):  # L W -- united
+def compute_L(obj: ti.template(), nobj: ti.template(), config: ti.template()):  # L W -- united
     for i in range(obj.part_num[None]):
         print(obj.neighbors_num[i])
         for n in range(obj.neighbors_num[i]):
@@ -115,10 +115,13 @@ def elasticity_compute_L(obj: ti.template(), nobj: ti.template(), config: ti.tem
         # if config.dim[None] == 2:
         #     obj.L[i][2, 2] = 1.0
 
-        if obj.L[i].determinant() != 0:  # invertible
-            obj.L[i] = obj.L[i].inverse()
-        else:
-            obj.L[i] = ti.Matrix.zero(float, 3, 3)
+
+def elasticity_compute_L(obj: ti.template(), nobj: ti.template(), config: ti.template()):
+    compute_L(obj, nobj, config)
+    L = obj.L.to_numpy()
+    inv = np.linalg.pinv(L[: obj.part_num[None]])
+    L[: obj.part_num[None]] = inv
+    obj.L.from_numpy(L)
 
 
 @ti.func
@@ -172,7 +175,10 @@ def elasticity_compute_stress(obj: ti.template(), nobj: ti.template(), config: t
             obj.F[i] += nobj.rest_volume[j] * xji @ RLW0.transpose()
 
         obj.strain[i] = 0.5 * (obj.F[i] + obj.F[i].transpose()) - ti.Matrix.identity(float, 3)
-        obj.stress[i] = 2.0 * config.elasticity_mu[None] * obj.strain[i] + config.elasticity_lambda[None] * obj.strain[i].trace() * ti.Matrix.identity(float, 3)
+        # obj.stress[i] = 2.0 * config.elasticity_mu[None] * obj.strain[i] + config.elasticity_lambda[None] * obj.strain[i].trace() * ti.Matrix.identity(float, 3)
+        l = obj.K[i] - 2 * obj.G[i] / 3
+        obj.stress[i] = 2.0 * obj.G[i] * obj.strain[i] + l * obj.strain[i].trace() * ti.Matrix.identity(float, 3)
+
 
         # print("stress",obj.strain[i], obj.stress[i])
         # # ε = (F+FT)/2 -I symmetric
@@ -253,8 +259,11 @@ def elasticity_iter_stress(i: ti.template(), obj: ti.template(), nobj: ti.templa
 
     # P = 2μ*strain + (K-2μ/3)*trace(strain)*I
     # K = λ+2μ/3
-    obj.stress_adv[i] = obj.strain[None] * 2.0 * config.elasticity_mu[None]
-    ltrace = config.elasticity_lambda[None] * (obj.strain[None][0] + obj.strain[None][1] + obj.strain[None][2])
+    # obj.stress_adv[i] = obj.strain[None] * 2.0 * config.elasticity_mu[None]
+    obj.stress_adv[i] = obj.strain[None] * 2.0 * obj.G[i]
+    l = obj.K[i] - 2 * obj.G[i] / 3
+    ltrace = l * (obj.strain[None][0] + obj.strain[None][1] + obj.strain[None][2])
+    # ltrace = config.elasticity_lambda[None] * (obj.strain[None][0] + obj.strain[None][1] + obj.strain[None][2])
     obj.stress_adv[i][0] += ltrace
     obj.stress_adv[i][1] += ltrace
     obj.stress_adv[i][2] += ltrace
@@ -415,9 +424,9 @@ def sph_elasticity_step(ngrid, fluid, bound, config):
     SPH_advection_gravity_acc(fluid, config)
     SPH_advection_viscosity_acc(ngrid, fluid, fluid, config)
     elasticity_step(fluid, config)
-    # elasticity_cfl_condition(fluid, config)
-    SPH_advection_update_vel_adv(fluid, config)
 
+    SPH_advection_update_vel_adv(fluid, config)
+    elasticity_cfl_condition(fluid, config)
     """ IPPE SPH pressure """
     config.incom_iter_count[None] = 0
     while config.incom_iter_count[None] < config.iter_threshold_min[None] or config.is_compressible[None] == 1:
