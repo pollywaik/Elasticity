@@ -85,15 +85,16 @@ class Fluid:
         self.lamb = ti.field(float)
 
         # elasticity
-        self.G = ti.field(float)
-        self.K = ti.field(float)
+        self.E = ti.field(float)  # youngs modulus
+        self.nu = ti.field(float)  # poisson ratio
+
 
         # put for-each-particle attributes in this list to register them!
         self.attr_list = [self.color, self.color_vector, self.mass, self.rest_density, self.rest_volume, self.pressure,self.pressure_force,
                           self.volume_frac, self.volume_frac_tmp, self.pos, self.gui_2d_pos, self.vel, self.vel_adv,self.acce, self.acce_adv,
                           self.W, self.W_grad, self.sph_density, self.sph_compression, self.psi_adv, self.alpha, self.alpha_1, self.alpha_2, self.fbm_zeta, self.normal,
                           self.neighb_cell_seq, self.neighb_in_cell_seq, self.neighb_cell_structured_seq, self.ones,self.flag, self.pos_disp, self.transform_tmp_pos,
-                          self.F_mid, self.vel_mid, self.lamb, self.G, self.K]
+                          self.F_mid, self.vel_mid, self.lamb, self.E, self.nu]
 
         # allocate memory for attributes (1-D fields)
         for attr in self.attr_list:
@@ -134,11 +135,11 @@ class Fluid:
 
     # add n dimension cube to scene
     def scene_add_cube(self, start_pos, end_pos, volume_frac, vel, color,
-                       relaxing_factor, G, K, config):  # add relaxing factor for each cube
+                       relaxing_factor, E, nu, config):  # add relaxing factor for each cube
         spacing = config.part_size[1] * relaxing_factor
         matrix_shape, padding = self.scene_add_help_centering(start_pos, end_pos, spacing)
 
-        self.push_matrix(np.ones(matrix_shape, dtype=np.bool_), start_pos + padding, spacing, volume_frac, vel, color, G, K, config)
+        self.push_matrix(np.ones(matrix_shape, dtype=np.bool_), start_pos + padding, spacing, volume_frac, vel, color, E, nu, config)
 
     #add particles from inlet
     def scene_add_from_inlet(self, center, size, norm, speed, volume_frac, color,
@@ -165,7 +166,7 @@ class Fluid:
 
 
     # add 3D or 2D hollow box to scene, with several layers
-    def scene_add_box(self, start_pos, end_pos, layers, volume_frac, vel, color, relaxing_factor, G, K, config):
+    def scene_add_box(self, start_pos, end_pos, layers, volume_frac, vel, color, relaxing_factor, E, nu, config):
         spacing = config.part_size[1] * relaxing_factor
         matrix_shape, padding = self.scene_add_help_centering(start_pos, end_pos, spacing)
         box = np.ones(matrix_shape, dtype=np.bool_)
@@ -176,19 +177,19 @@ class Fluid:
             layers: matrix_shape[2] - layers] = False
         else:
             raise Exception('scenario error: can only add 2D or 3D boxes')
-        self.push_matrix(box, start_pos + padding, spacing, volume_frac, vel, color,  G, K,config)
+        self.push_matrix(box, start_pos + padding, spacing, volume_frac, vel, color,  E, nu, config)
 
-    def scene_add_ply(self, p_sum, pos_seq, volume_frac, vel, color, G, K, config):
-        self.push_part_seq(p_sum, color, pos_seq, ti.Vector(volume_frac), ti.Vector(vel),  G, K,config)
+    def scene_add_ply(self, p_sum, pos_seq, volume_frac, vel, color, E, nu, config):
+        self.push_part_seq(p_sum, color, pos_seq, ti.Vector(volume_frac), ti.Vector(vel),  E, nu, config)
 
     # add particles according to true and false in the matrix
     # matrix: np array (dimension: dim, dtype: np.bool)
-    def push_matrix(self, matrix, start_position, spacing, volume_frac, vel, color, G, K, config):
+    def push_matrix(self, matrix, start_position, spacing, volume_frac, vel, color, E, nu, config):
         if len(matrix.shape) != config.dim[None]:
             raise Exception('push_matrix() [scenario error]: wrong object dimension')
         index = np.where(matrix == True)
         pos_seq = np.stack(index, axis=1) * spacing + start_position
-        self.push_part_seq(len(pos_seq), color, pos_seq, ti.Vector(volume_frac), ti.Vector(vel), G, K, config)
+        self.push_part_seq(len(pos_seq), color, pos_seq, ti.Vector(volume_frac), ti.Vector(vel), E, nu, config)
 
 
     @ti.kernel
@@ -201,7 +202,7 @@ class Fluid:
 
 
     @ti.kernel
-    def push_attrs_seq(self, color: int, volume_frac: ti.template(), vel: ti.template(), G:float, K:float, pushed_part_num: int, current_part_num: int, config: ti.template()):
+    def push_attrs_seq(self, color: int, volume_frac: ti.template(), vel: ti.template(), E:float, nu:float, pushed_part_num: int, current_part_num: int, config: ti.template()):
         for i in range(pushed_part_num):
             i_p = i + current_part_num
             self.volume_frac[i_p] = volume_frac
@@ -211,18 +212,18 @@ class Fluid:
             self.color_vector[i_p] = hex2rgb(color)
             self.rest_density[i_p] = config.phase_rest_density[None].dot(self.volume_frac[i_p])
             self.mass[i_p] = self.rest_density[i_p] * self.rest_volume[i_p]
-            self.G[i_p] = G
-            self.K[i_p] = K
+            self.E[i_p] = E
+            self.nu[i_p] = nu
 
 
-    def push_part_seq(self, pushed_part_num, color, pos_seq, volume_frac, vel, G, K, config):
+    def push_part_seq(self, pushed_part_num, color, pos_seq, volume_frac, vel, E, nu, config):
         print('push ',pushed_part_num, ' particles')
         current_part_num = self.part_num[None]
         new_part_num = current_part_num + pushed_part_num
         pos_seq_ti = ti.Vector.field(config.dim[None], float, pushed_part_num)
         pos_seq_ti.from_numpy(pos_seq)
         self.push_pos_seq(pos_seq_ti, pushed_part_num, current_part_num, config)
-        self.push_attrs_seq(color, volume_frac, vel, G, K, pushed_part_num, current_part_num, config)
+        self.push_attrs_seq(color, volume_frac, vel, E, nu, pushed_part_num, current_part_num, config)
         self.part_num[None] = new_part_num
 
 
@@ -320,15 +321,15 @@ class Fluid:
         pre_part_cnt=self.part_num[None]
         if param['type'] == 'cube':
             self.scene_add_cube(param['start_pos'], param['end_pos'], param['volume_frac'], param['vel'], int(param['color'], 16),
-                                param['particle_relaxing_factor'],  param['G'], param['K'], config)
+                                param['particle_relaxing_factor'],  param['E'], param['nu'], config)
         elif param['type'] == 'box':
             self.scene_add_box(param['start_pos'], param['end_pos'], param['layers'], param['volume_frac'], param['vel'],
-                               int(param['color'], 16), param['particle_relaxing_factor'],  param['G'], param['K'], config)
+                               int(param['color'], 16), param['particle_relaxing_factor'],  param['E'], param['nu'], config)
         elif param['type'] == 'ply':
             verts = read_ply(param['file_name'])
             if 'start_pos' in param:
                 verts += param['start_pos']
-            self.scene_add_ply(len(verts), verts, param['volume_frac'], param['vel'], int(param['color'], 16), param['G'], param['K'], config)
+            self.scene_add_ply(len(verts), verts, param['volume_frac'], param['vel'], int(param['color'], 16), param['E'], param['nu'], config)
         else:
             raise Exception('scenario ERROR: object type unsupported:',
                 param['type'] if 'type' in param else 'None')

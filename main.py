@@ -31,10 +31,6 @@ init_scenario(fluid, bound, scenario, config)
 init_elasticity_scenario(ngrid, fluid, bound, config)  # todo
 print('Done pushing particles')
 
-for i in range(fluid.part_num[None]):
-    print(fluid.K[i])
-    print(fluid.G[i])
-
 # sph_elasticity_step(ngrid, fluid, bound, config)
 
 gui = Gui(config)
